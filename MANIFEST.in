@@ -1,4 +1,7 @@
-include ccAFv2/ccAFv2_model.h5
 include ccAFv2/ccAFv2_genes.csv
 include ccAFv2/ccAFv2_classes.txt
+include tests/ccAFv2_pytest.py
+include tests/R_ccAFv2_inp.hdf5
+include tests/R_ccAFv2_oup.hdf5
+
 include README.md

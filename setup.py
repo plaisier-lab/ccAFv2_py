@@ -18,7 +18,8 @@
 ##########################################################
 
 import pathlib
-from setuptools import setup
+from setuptools import setup, Extension
+from Cython.Build import cythonize
 
 # The directory containing this file
 HERE = pathlib.Path(__file__).parent
@@ -26,10 +27,17 @@ HERE = pathlib.Path(__file__).parent
 # The text of the README file
 long_description = (HERE / "README.md").read_text()
 
-# This call to setup() does all the work
+ext_modules = [
+    Extension(
+        "ccAFv2._ccAFv2", 
+        sources=["ccAFv2/_ccAFv2.pyx", "ccAFv2/C_ccAFv2.c"],  # include C source
+        include_dirs=["ccAFv2"],  # where mycode.h is located
+         language="c",
+        )]
+
 setup(
     name="ccAFv2",
-    version="2.0.5",
+    version="2.1.0",
     description="Classify scRNA-seq profiling with highly resolved cell cycle phases.",
     long_description=long_description,
     long_description_content_type="text/markdown",
@@ -42,10 +50,10 @@ setup(
         "Topic :: Scientific/Engineering :: Bio-Informatics",
         "Topic :: Scientific/Engineering :: Medical Science Apps.",
         "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.7",
+        "Programming Language :: Python :: 3.12",
     ],
-    #py_modules = ['ccAF'],
-    packages = ['ccAFv2'],
-    include_package_data=True,
-    install_requires=["importlib-resources", "numpy", "scipy", "pandas"], #, "tensorflow", "keras"],
+    packages=["ccAFv2"],
+    ext_modules=cythonize(ext_modules),
+    include_package_data = True,
+    zip_safe = False,
 )

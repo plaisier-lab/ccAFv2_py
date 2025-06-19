@@ -10,47 +10,31 @@
 ##   Arizona State University                           ##
 ##   242 ISTB1, 550 E Orange St                         ##
 ##   Tempe, AZ  85281                                   ##
-## @Author:  Chris Plaisier, Samantha O'Connor          ##
+## @Author:  Chris Plaisier, Samantha O'Connor,         ##
+#            Thurston Herricks                          ##
 ## @License:  GNU GPLv3                                 ##
 ##                                                      ##
 ## If this program is used in your analysis please      ##
 ## mention who built it. Thanks. :-)                    ##
 ##########################################################
 
-##########################################
-## Load Python packages for classifiers ##
-##########################################
-
-# General
-from importlib.resources import path
-import numpy as np
+import numpy  as np
 import pandas as pd
-import os
-from scipy.sparse import isspmatrix
 import scanpy as sc
-sc.settings.verbosity = 0
+import pathlib
+
+from ._ccAFv2            import run_model
+from importlib.resources import files
+
+from scipy.stats           import zscore
 from sklearn.preprocessing import StandardScaler
+sc.settings.verbosity = 0
 
-# Stop warning messages for cudart
-import logging
-logging.disable(logging.WARNING)
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = "3"
-logging.getLogger('tensorflow').disabled = True
+in_path = files("ccAFv2").joinpath("ccAFv2_genes.csv")
+_genes_all = pd.read_csv(in_path, index_col=0, header=0)
 
-# Neural network
-import tensorflow as tf
-from tensorflow import keras
-
-
-################
-## Load model ##
-################
-with path('ccAFv2', 'ccAFv2_model.h5') as inPath:
-    _classifier = keras.models.load_model(inPath)
-with path('ccAFv2', 'ccAFv2_genes.csv') as inPath:
-    _genes_all = pd.read_csv(inPath, index_col=0, header=0)
-with path('ccAFv2', 'ccAFv2_classes.txt') as inPath:
-    _classes = list(pd.read_csv(inPath, header=None)[0])
+in_path = files("ccAFv2").joinpath("ccAFv2_classes.txt")
+_pred_classes = tuple(pd.read_csv(in_path, header=None)[0])
 
 
 ###############
@@ -73,7 +57,7 @@ def _scale(data):
     return scaled_data
 
 # Prepare test data for predicting
-def _prep_predict_data(data, genes):
+def _normalize_data(data, genes_classified):
     """
     prep_predict_data takes in a pandas dataframe and the trained ccAFv2 model.
 
@@ -81,8 +65,8 @@ def _prep_predict_data(data, genes):
     ----------
     data : pd.DataFrame
         DataFrame of scRNA-seq data to be classified.
-    model : keras.models.sequential
-        Trained ccAFv2 sequential keras model.
+    genes_classified :  List 
+        List of genes and order of the genes the classifier is trained on.
 
     Returns
     -------
@@ -90,34 +74,85 @@ def _prep_predict_data(data, genes):
         Series of labels for each single cell.
 
     """
-    print('    Preparing data for classification...')
-    # Remove all genes with zero counts
-    data.var_names_make_unique()
-    sc.pp.filter_genes(data, min_cells=1)
-    # Restrict to classifier genes
-    in_both = list(set(genes).intersection(data.var_names))
-    if(len(in_both)>0):
-        print('    Marker genes present in this dataset: '+str(len(in_both)))
-        print('    Missing marker genes in this dataset: '+str(len(set(genes))-len(in_both)))
-        data2 = data[:,in_both]
-        # Scale data
-        if isspmatrix(data.X):
-            data2 = pd.DataFrame(data2.X.todense(), index = data2.obs_names, columns = data2.var_names)
-        else:
-            data2 = pd.DataFrame(data2.X, index = data2.obs_names, columns = data2.var_names)
-        data3 = pd.DataFrame(_scale(data2), index = data2.index, columns = data2.columns)
-        # Add minimum values for missing genes
-        missing = set(genes).difference(data3.columns)
-        if len(missing)>0:
-            data4 = pd.concat([data3, pd.DataFrame(data3.values.min(), index=data3.index, columns = missing)], axis=1)
-            return data4[list(genes)]
-        else:
-            return data3
-    else:
-        raise RuntimeError('Check species and gene_id, because there is no overlap between input genes and classifier genes!')
 
-# Predict labels with rejection
-def predict_labels(new_data, species='human', gene_id='ensembl', threshold=0.5, include_g0=False, classifier=_classifier, genes_all=_genes_all, classes=_classes):
+    min_genes = 689
+
+    print('    Preparing data for classification...')
+   # Make indicies unique just incase there are doubling up on gene names.  
+    data.var_names_make_unique()
+    
+    # Remove all genes with zero counts.
+    sc.pp.filter_genes(data, min_cells=1)
+
+    # Create dense pandas arrays using the cells observerd and the union of the classified genes and genes in the dataset.
+    data_index = data.obs_names
+    data_cols  = list(set(data.var_names) & set(genes_classified))
+
+    print(f'    Marker genes present in this dataset: {len(data_cols)}')
+    print(f'    Missing marker genes in this dataset: {len(genes_classified)-len(data_cols)}')
+    
+    # Check to make sure that at lease 80% of classifier genes are present.
+    if len(data_cols) > 0:
+
+        # Z-score the data that is observed and overlaping with the gene_set data. 
+        scaled_data = _scale(data[:,data_cols].X.toarray())
+        data_temp   = pd.DataFrame(scaled_data, index = data_index, columns = data_cols)
+      
+        # Reindex the temporary array to add in missing columns/genes and ensure the same column order as the original classifer.  
+        # Fill the missing values with the minimum values of the dataset.  
+        data_zscored  = data_temp.reindex(columns = genes_classified, fill_value = data_temp.values.min())
+    
+        return data_zscored
+
+    else:
+        raise RuntimeError('Check species and gene_id, because there is no overlap between input genes and classifier genes!\n Or too few genes are present in this dataset')
+
+# Use ccAFv2 classifier to calculate class probabilities
+def _predict_new_data(new_data):
+    """
+    _predict_new_data takes in a pandas dataframe and the trained ccAFv2 model.
+
+    Parameters
+    ----------
+    new_data : pd.DataFrame
+        DataFrame of scRNA-seq data to be classified.  
+        rows need to be cells and columns need to be the 861 classifer genes
+        The gene order is given in the file ccAFv2_gens.csv
+    
+    Returns
+    -------
+    out_preds: flaot32 numpy array of probabilities 
+        rows are the cell samples
+        columns are classifiers given by the order in ccAFv2_classes.txt
+
+    """
+    if new_data.shape[1] != 861:
+        raise RuntimeError('Input data frame not the right size for predictions.  Please check the integrity of the gene list')
+    
+    if not new_data.shape[0]:
+        raise RuntimeError('There are no cells in the input data')
+
+    print('  Predicting cell cycle state probabilities...')
+    # Create output array to receive data.
+    oup_preds = np.zeros((new_data.shape[0], 7), dtype = 'float32')
+
+    # Change the pandas dataframe to a numpy array of float32 
+    inp_data = new_data.to_numpy()
+    inp_data = np.ascontiguousarray(inp_data, dtype = np.float64)
+
+    # Loop through array to make predictions
+    for ind in range(inp_data.shape[0]):
+        oup_preds[ind,:] = run_model(inp_data[ind,:].reshape(1,861))
+    
+    return oup_preds
+
+# Predict labels from class probabilities with rejection threshold
+def predict_labels( new_data, species = 'human', 
+                    gene_id = 'ensembl', 
+                    threshold = 0.5, 
+                    include_g0 = False,  
+                    genes_all =_genes_all, 
+                    pred_classes =_pred_classes):
     """
     predict_new_data takes in a pandas dataframe and the trained ccAFv2 model.
 
@@ -136,45 +171,63 @@ def predict_labels(new_data, species='human', gene_id='ensembl', threshold=0.5, 
 
     Returns
     -------
-    pd.Series
+    labels:  pd.Series:
         Series of labels for each single cell.
+    
+    probs: # samples x 8 float64 np.array
+        Probabilies of classes with the last row being the 'Unknown' threshold catagory
 
     """
-    print('Running ccAFv2:')
-    genes = genes_all[species+'_'+gene_id]
-    pred_data = _prep_predict_data(new_data, genes)
-    probabilities = _predict_new_data(pred_data, classifier)
-    print('  Choosing cell cycle state...')
-    labels = np.array([classes[np.argmax(i)] for i in probabilities])
-    labels[np.where([np.max(i) < threshold for i in probabilities])] = 'Unknown'
-    if not include_g0:
-        labels[np.where(labels=='Neural G0')] = 'G0/G1'
-        labels[np.where(labels=='G1')] = 'G0/G1'
-        labels[np.where(labels=='Late G1')] = 'G0/G1'
-        labels = pd.Categorical(labels, categories=['G0/G1', 'S', 'S/G2', 'G2/M', 'M/Early G1', 'Unknown'], ordered=True)
+
+    if include_g0:
+        class_map      = {  0 : 'G0/G1',
+                            1 : 'G2/M',
+                            2 : 'G0/G1',
+                            3 : 'M/Early G1',
+                            4 : 'G0/G1',
+                            5 : 'S',
+                            6 : 'S/G2',
+                            7 : 'Unknown'}
     else:
-        labels = pd.Categorical(labels, categories=['Neural G0', 'G1', 'Late G1', 'S', 'S/G2', 'G2/M', 'M/Early G1', 'Unknown'], ordered=True)
+        class_map       = { 0 : 'G1',
+                            1 : 'G2/M',
+                            2 : 'Late G1',
+                            3 : 'M/Early G1',
+                            4 : 'Neural G0',
+                            5 : 'S',
+                            6 : 'S/G2',
+                            7 : 'Unknown'}
+
+
+    # Determin the number of classes and add one more for the unknown value
+    n_classes = len(class_map)
+
+    # Create array fpr probability values.  initialize the array to the unknown class threshold value.  
+    probs = np.full((new_data.shape[0], n_classes), fill_value = threshold, dtype = 'float32')
+
+    print('Running ccAFv2:')
+
+    # Select the correct species
+    genes = genes_all[f'{species}_{gene_id}'].tolist()
+
+    # Normalize data, organize gene order, and fill in empty values.
+    pred_data = _normalize_data(new_data, genes)
+
+    # Make predictions from the data using the ccAFv2 classifier.
+    probs_raw = _predict_new_data(pred_data)
+    
+    # Fill in the predicted probabilities.
+    probs[:, :n_classes-1] = probs_raw[:,:]
+
+    print('  Choosing cell cycle state...')
+
+    # Find the column of the highest probability value.
+    probs_call = np.argmax(probs, axis = 1)
+
+    # Create a pandas series and map the values to labels using the class_map dictionary.
+    labels = pd.Series(data = probs_call, 
+                       index = new_data.obs_names, 
+                       name = 'Cell State').map(class_map).astype('category')
+
     print('Done.')
-    return labels, probabilities
-
-# Predict ccAFv2 labels for new data
-def _predict_new_data(new_data, classifier):
-    """
-    predict_new_data takes in a pandas dataframe and the trained ccAFv2 model.
-
-    Parameters
-    ----------
-    new_data : pd.DataFrame
-        DataFrame of scRNA-seq data to be classified.
-    model : keras.models.sequential
-        Trained ccAFv2 sequential keras model.
-
-    Returns
-    -------
-    pd.Series
-        Series of labels for each single cell.
-
-    """
-    print('  Predicting cell cycle state probabilities...')
-    return classifier.predict(new_data)
-
+    return labels, probs

@@ -13,7 +13,7 @@ This repository is for the Python package for the cell cycle classifier ccAFv2. 
 - [Classifying single cell or nuclei RNA-seq](#classifying-single-cell-or-nuclei-rna-seq)
     - [Input for classification](#input-for-classification)
     - [Test data](#test-data)
-	- [Cell cycle classification](#cell-cycle-classification)
+    - [Cell cycle classification](#cell-cycle-classification)
     - [Plotting cell cycle states](#plotting-cell-cycle-states)
         - [Plotting a UMAP with cell cycle states](#plotting-a-umap-with-cell-cycle-states)
 - [Maintainers](#maintainers)
@@ -30,15 +30,10 @@ There are four dependencies that must be met for ccAF to classify cell cycle sta
 1. [numpy](https://numpy.org/) - ([install](https://numpy.org/install/))
 2. [scipy](https://www.scipy.org/index.html) - ([install](https://www.scipy.org/install.html))
 3. [scanpy](https://scanpy.readthedocs.io/en/latest/) - ([install](https://scanpy.readthedocs.io/en/latest/installation.html))
-4. [tensorflow](https://www.tensorflow.org/) - ([install](https://www.tensorflow.org/install))
-5. [keras](https://keras.io/) - ([install](https://keras.io/getting_started/))
+4. [h5py](https://www.h5py.org/) - ([install](https://docs.h5py.org/en/latest/build.html))
 
 ##### Python dependency installation commands
 > **NOTE!**  pip may need to be replaced with pip3 depending upon your setup.
-
-```sh
-pip install numpy scipy scanpy tensorflow keras
-```
 
 #### Installation of ccAF classifier
 The ccAFv2 classifier can be installed with the following command:
@@ -87,10 +82,10 @@ import scanpy as sc
 import ccAFv2
 
 # Load up test dataset
-PCW8 = sc.read_h5ad('W8-1_normalized_ensembl.h5ad')
+pwc8_scdata = sc.read_h5ad('W8-1_normalized_ensembl.h5ad')
 
 # Run ccAFv2 to predict cell labels
-PCW8_labels = ccAFv2.predict_labels(PCW8, species='human', gene_id='ensembl')
+labels, predictions = ccAFv2.predict_labels(pwc8_scdata , species='human', gene_id='ensembl')
 ```
 When the classifier is running it should look something like this:
 
@@ -121,36 +116,56 @@ ccAFv2.predict_labels(scanpy_obj,
 
 ### Cell cycle classification results
 
-The results of the cell cycle classification are stored in the first element of the 'ccAFv2.predict_labels' output, and the likelihoods are stored in the second element.
+The results of the cell cycle classification are stored in the 'labels' variable of the 'ccAFv2.predict_labels' output, and the likelihoods are stored in the 'predictions' variable.
 
 ```python
-PCW8_labels
+labels
+```
+The labels variable returns the following:
+
+```python
+AAACCTGTCAGTTCGA-1-1-0-0-0           G1
+AAACCTGTCTCTTATG-1-1-0-0-0            S
+AAACGGGAGGGTCTCC-1-1-0-0-0    Neural G0
+AAACGGGGTTCGAATC-1-1-0-0-0           G1
+AAACGGGGTTCGCGAC-1-1-0-0-0           G1
+                                ...
+TTTATGCGTTGTCGCG-3-1-0-0-0         G2/M
+TTTGCGCGTCAAGCGA-3-1-0-0-0    Neural G0
+TTTGGTTAGTCAAGGC-3-1-0-0-0      Late G1
+TTTGGTTCAGTAAGAT-3-1-0-0-0    Neural G0
+TTTGGTTGTGGACGAT-3-1-0-0-0            S
+Name: Cell State, Length: 2562, dtype: category
+Categories (8, object): ['G1', 'G2/M', 'Late G1', 'M/Early G1', 'Neural G0', 'S', 'S/G2',
+                         'Unknown']
 ```
 
-Which returns the following:
+'''python 
+predictions
+'''
+The predictions variable returns the following:
 
-```python
-(array(['G1', 'S', '', ..., 'Late G1', 'Neural G0', 'S'],
-      dtype='<U10'), array([[9.96540964e-01, 2.77950567e-05, 1.62392517e-03, ...,
-        1.12998277e-04, 1.34928769e-03, 3.37415549e-04],
-       [2.38446728e-03, 9.58865421e-05, 4.40378720e-03, ...,
-        1.25416279e-01, 7.62154996e-01, 1.05463535e-01],
-       [3.09040988e-05, 1.47282879e-06, 3.99237297e-06, ...,
-        9.99962687e-01, 1.65011215e-07, 8.85220061e-07],
+'''python
+array([[9.9654096e-01, 2.7795029e-05, 1.6239237e-03, ..., 1.3492864e-03,
+        3.3741508e-04, 5.0000000e-01],
+       [2.3844824e-03, 9.5887110e-05, 4.4037965e-03, ..., 7.6215446e-01,
+        1.0546359e-01, 5.0000000e-01],
+       [3.0904070e-05, 1.4728287e-06, 3.9923802e-06, ..., 1.6501120e-07,
+        8.8521841e-07, 5.0000000e-01],
        ...,
-       [2.72926106e-03, 3.59202386e-03, 9.85045612e-01, ...,
-        8.02930258e-03, 1.00778125e-04, 4.46247839e-04],
-       [1.43443659e-01, 1.61317177e-03, 2.99169007e-03, ...,
-        8.51489604e-01, 1.09878434e-04, 3.27764486e-04],
-       [7.05660739e-07, 1.27422639e-09, 1.13804369e-07, ...,
-        1.86515393e-07, 9.99996066e-01, 2.80967629e-06]], dtype=float32))
-```
+       [2.7292622e-03, 3.5920220e-03, 9.8504561e-01, ..., 1.0077821e-04,
+        4.4624828e-04, 5.0000000e-01],
+       [1.4344385e-01, 1.6131684e-03, 2.9916968e-03, ..., 1.0987800e-04,
+        3.2776382e-04, 5.0000000e-01],
+       [7.0566205e-07, 1.2742312e-09, 1.1380459e-07, ..., 9.9999607e-01,
+        2.8096736e-06, 5.0000000e-01]], shape=(2562, 8), dtype=float32)
+'''
 
 In the code Below we demonstrate how the classifications can be added to the metadata. After adding the column to the .obs metadata, the classification for each cell would then found in the column 'ccAFv2', and is a categorical variable which helps with plotting.
 
 ```python
 # Save into scanpy object
-PCW8.obs['ccAFv2'] = pd.Categorical(PCW8_labels[0], categories=['', 'G1', 'Late G1', 'S', 'S/G2', 'G2/M', 'M/Early G1', 'Unknown'], ordered=True)
+pwc6_scdata.obs['ccAFv2'] = labels
 ```
 
 ### Plotting cell cycle states
@@ -161,18 +176,18 @@ We provide plotting functions that colorize the cell cycle states in the way use
 
 Plotting cells using ther first two dimensions from a dimensionality reduction method (e.g., PCA, tSNE, or UMAP) is a common way to represent single cell or nuclei RNA-seq data. Below we provide code to plot the cells colorized based on their called cell cycle state.
 
-```r
+```python
 # Run UMAP of U5 hNSCs
-sc.pp.highly_variable_genes(PCW8, n_top_genes=2000)
-sc.tl.pca(PCW8)
-sc.pp.neighbors(PCW8)
-sc.tl.umap(PCW8)
+sc.pp.highly_variable_genes(pcw8_scdata, n_top_genes=2000)
+sc.tl.pca(pcw8_scdata)
+sc.pp.neighbors(pcw8_scdata)
+sc.tl.umap(pcw8_scdata)
 
 # Prepare a color mapping dictionary
 cmap1 = {"": "#d9a428", "G1": "#f37f73", "Late G1": "#1fb1a9",  "S": "#8571b2", "S/G2": "#db7092", "G2/M": "#3db270" ,"M/Early G1": "#6d90ca",  "Unknown": "#d3d3d3"}
 
 # Plot UMAP of U5 hNSCs
-sc.pl.umap(PCW8, color=['ccAFv2'], palette=cmap1, save='ccAFv2_UMAP_PCW8.pdf')
+sc.pl.umap(pcw8_scdata, color=['ccAFv2'], palette=cmap1, save='ccAFv2_UMAP_PCW8.pdf')
 ```
 
 In the figures folder you will find the PDF 'umapccAFv2_UMAP_PCW8.pdf'. Below is the UMAP for the hNSCs from a human fetus 8 weeks post-conception colorized using the cell cycle states. The expected flow of the cell cycle states can be seen in the UMAP.

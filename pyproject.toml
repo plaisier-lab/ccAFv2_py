@@ -1,0 +1,54 @@
+##########################################################
+## ccAF:  pyproject.toml                                ##
+##  ______     ______     __  __                        ##
+## /\  __ \   /\  ___\   /\ \/\ \                       ##
+## \ \  __ \  \ \___  \  \ \ \_\ \                      ##
+##  \ \_\ \_\  \/\_____\  \ \_____\                     ##
+##   \/_/\/_/   \/_____/   \/_____/                     ##
+## @Developed by: Plaisier Lab                          ##
+##   (https://plaisierlab.engineering.asu.edu/)         ##
+##   Arizona State University                           ##
+##   242 ISTB1, 550 E Orange St                         ##
+##   Tempe, AZ  85281                                   ##
+## @Author:  Chris Plaisier, Samantha O'Connor          ##
+## @License:  GNU GPLv3                                 ##
+##                                                      ##
+## If this program is used in your analysis please      ##
+## mention who built it. Thanks. :-)                    ##
+##########################################################
+
+[project]
+name = "ccAFv2"
+version = "2.1.0"
+authors = [{name = "Chris Plaisier", email = "plaisier@asu.edu"}]
+description = "Classify scRNA-seq profiling with highly resolved cell cycle phases."
+readme = "README.md"
+license= { file = "LICENSE" }
+classifiers=[
+    "License :: OSI Approved :: GNU Affero General Public License v3",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = ['numpy', 'h5py', 'scipy', 'scikit-learn', 'scanpy']
+[project.urls]
+Homepage = "https://faculty.engineering.asu.edu/plaisier/"
+Repository = "https://github.com/plaisier-lab/ccAFv2_py"
+
+
+[build-system]
+requires = ["setuptools>=61.0", "cython"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["ccAFv2"]
+ext-modules = [{name = "ccAFv2._ccAFv2",  sources = ["ccAFv2/_ccAFv2.pyx", "ccAFv2/C_ccAFv2.c"], language = "c"}]
+
+[tool.setuptools.package-data]
+ccAFv2 = ["*.pxd", "*.h", "*.c"]
+
+[tool.setuptools.cmdclass]
+build_ext = "Cython.Build.build_ext"
+
+

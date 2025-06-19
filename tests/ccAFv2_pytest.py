@@ -30,6 +30,12 @@ import numpy as np
 import scanpy as sc
 import pathlib
 
+
+def getHDF5str(str_array):
+    '''Generate a string array from individual bchar values'''
+
+    return ''.join(c.astype(str)  for c in str_array.squeeze())
+
 def _getHDF5Data(hdf5Obj):
     """
     Recursively load data from HDF5 file.  

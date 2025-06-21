@@ -26,12 +26,14 @@
 
 import ccAFv2
 import h5py
-import numpy as np
+import numpy  as np
 import scanpy as sc
 import pathlib
 
+import matplotlib.pyplot as plt
 
-def getHDF5str(str_array):
+
+def _getHDF5str(str_array):
     '''Generate a string array from individual bchar values'''
 
     return ''.join(c.astype(str)  for c in str_array.squeeze())
@@ -45,7 +47,7 @@ def _getHDF5Data(hdf5Obj):
  
         if   isinstance(item, h5py.Dataset):
             if item.dtype == 'S10':
-                d[key] = getHDF5str(item[()])
+                d[key] = _getHDF5str(item[()])
             else: 
               
                 d[key] = item[()]
@@ -71,14 +73,14 @@ def loadData(filename):
     return d
 
 if __name__ == "__main__":
-
-    lbl_encoder_dict = {'G1': 0,
-                        'G2/M': 1,
-                        'Late G1': 2,
-                        'M/Early G1': 3,
-                        'Neural G0': 4,
-                        'S': 5,
-                        'S/G2': 6}
+    lbl_encoder_dict    = { 0 : 'G1',
+                            1 : 'G2/M',
+                            2 : 'Late G1',
+                            3 : 'M/Early G1',
+                            4 : 'Neural G0',
+                            5 : 'S',
+                            6 : 'S/G2',
+                            7 : 'Unknown'}
 
     print('Loading test data and comparison data...')
 
@@ -97,7 +99,6 @@ if __name__ == "__main__":
         
         oup_test[ind,:] = ccAFv2.run_model(inp_data['U5'][ind,:].reshape(1,861))
     
-
     print('Calculating model difference in predictions...')
     predict_delta = oup_data['U5']-oup_test
 
@@ -106,7 +107,7 @@ if __name__ == "__main__":
     sdev_diff = np.std(predict_delta, axis = 0)
 
     # Make a formated string array to print the data we just calculated
-    formatted_array = np.array([f'{key.strip()} stage mean difference = {mn:.2e} \u00B1 {sd:.2e}' for key, mn, sd in zip(lbl_encoder_dict, mean_diff, sdev_diff)])
+    formatted_array = np.array([f'{val.strip()} stage mean difference = {mn:.2e} \u00B1 {sd:.2e}' for (key, val), mn, sd in zip(lbl_encoder_dict.items(), mean_diff, sdev_diff)])
 
     print('Difference between predictions \nR model and python model\n')
     for n in formatted_array:
@@ -117,29 +118,23 @@ if __name__ == "__main__":
     else:
         print('The test predictions did not match previous predictions.')
 
-     # Load up test dataset sorry I have an old path in here you may need to change that.
+    #  Load up test dataset sorry I have an old path in here you may need to change that.
     data_path = pathlib.Path("../Data/W8-1_normalized_ensembl.h5ad")
     pwc8_scdata = sc.read_h5ad(data_path)
 
     # Run ccAFv2 to predict cell labels
-    labels, predictions = ccAFv2.predict_labels(pwc8_scdata , species='human', gene_id='ensembl')
+    labels, predictions = ccAFv2.predict_labels(pwc8_scdata, species='human', gene_id='ensembl', include_g0 = True)
 
     print('Adding predicted labels to dataset')
     # Save into scanpy object
     pwc8_scdata.obs['ccAFv2'] = labels
 
     print('Performing UMAP plotting')
-    # Run UMAP of U5 hNSCs
-    sc.pp.highly_variable_genes(pwc8_scdata, n_top_genes=2000)
-    sc.tl.pca(pwc8_scdata)
-    sc.pp.neighbors(pwc8_scdata)
-    sc.tl.umap(pwc8_scdata)
+    ccAFv2.plot_UMAP(pwc8_scdata)
 
-    # Prepare a color mapping dictionary
-    cmap1 = {"Neural G0": "#d9a428", "G1": "#f37f73", "Late G1": "#1fb1a9",  "S": "#8571b2", "S/G2": "#db7092", "G2/M": "#3db270" ,"M/Early G1": "#6d90ca",  "Unknown": "#d3d3d3"}
+    print('Generating Threshold Plot')
+    ccAFv2.plot_threshold(class_probs = predictions, include_g0 = True)
 
-    # Plot UMAP of U5 hNSCs
-    sc.pl.umap(pwc8_scdata, color=['ccAFv2'], palette=cmap1, save='ccAFv2_UMAP_PCW8.pdf')
 
 
     

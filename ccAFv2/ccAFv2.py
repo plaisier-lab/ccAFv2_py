@@ -24,7 +24,10 @@ import scanpy as sc
 import pathlib
 import warnings
 
+from typing import Optional, Literal, Dict, List
+
 from ._ccAFv2            import run_model
+from anndata             import AnnData
 from importlib.resources import files
 import matplotlib.pyplot as plt
 
@@ -221,11 +224,12 @@ def _predict_classes(data_scnpy):
     return oup_preds
 
 # Predict labels from class probabilities with rejection threshold
-def predict_labels(data_scnpy, species = 'human', 
-                    gene_id = 'ensembl', 
-                    threshold = 0.5, 
-                    include_g0 = False,  
-                    genes_all =_genes_all):
+def predict_labels(data_scnpy: Optional[AnnData] = None, 
+                    species: Literal['human', 'mouse'] = 'human', 
+                    gene_id: Literal['ensembl', 'symbol'] = 'ensembl', 
+                    threshold: float = 0.5, 
+                    include_g0: bool = False,  
+                    genes_all: Dict[str, List[str]] = _genes_all):
     """
     predict_data_scnpy takes in a pandas dataframe and the trained ccAFv2 model.
 
@@ -289,7 +293,9 @@ def predict_labels(data_scnpy, species = 'human',
     return labels, probs
 
 # Plot Umap of data using scanpy umap plot function
-def plot_UMAP(data_scnpy, fig_save_path = None, n_top_genes = 2000):
+def plot_UMAP(data_scnpy: Optional[AnnData] = None,
+              fig_save_path: pathlib.Path | str | None = None, 
+              n_top_genes: int = 2000):
 
     """
     Plot UMAP of classified data
@@ -336,7 +342,10 @@ def plot_UMAP(data_scnpy, fig_save_path = None, n_top_genes = 2000):
     return None
 
 # Plot class frequency against prediction minnimum threshold values
-def plot_threshold(class_probs = None, threshold_levels =None, include_g0 = False,  fig_save_path = None):
+def plot_threshold(class_probs: np.ndarray | None = None, 
+                   threshold_levels: np.ndarray | None = None, 
+                   include_g0: bool = False,  
+                   fig_save_path: pathlib.Path | str | None = None):
 
     """
     Generate threshold plot of class frequency vs probability threshold

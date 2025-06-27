@@ -140,12 +140,12 @@ Categories (8, object): ['G1', 'G2/M', 'Late G1', 'M/Early G1', 'Neural G0', 'S'
                          'Unknown']
 ```
 
-'''python 
+```python 
 predictions
-'''
+```
 The predictions variable returns the following:
 
-'''python
+```python
 array([[9.9654096e-01, 2.7795029e-05, 1.6239237e-03, ..., 1.3492864e-03,
         3.3741508e-04, 5.0000000e-01],
        [2.3844824e-03, 9.5887110e-05, 4.4037965e-03, ..., 7.6215446e-01,
@@ -159,7 +159,7 @@ array([[9.9654096e-01, 2.7795029e-05, 1.6239237e-03, ..., 1.3492864e-03,
         3.2776382e-04, 5.0000000e-01],
        [7.0566205e-07, 1.2742312e-09, 1.1380459e-07, ..., 9.9999607e-01,
         2.8096736e-06, 5.0000000e-01]], shape=(2562, 8), dtype=float32)
-'''
+```
 
 In the code Below we demonstrate how the classifications can be added to the metadata. After adding the column to the .obs metadata, the classification for each cell would then found in the column 'ccAFv2', and is a categorical variable which helps with plotting.
 

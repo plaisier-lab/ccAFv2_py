@@ -41,7 +41,6 @@ _genes_all = pd.read_csv(in_path, index_col=0, header=0)
 in_path = files("ccAFv2").joinpath("ccAFv2_classes.txt")
 _pred_classes = tuple(pd.read_csv(in_path, header=None)[0])
 
-
 ###############
 ## Functions ##
 ###############
@@ -292,10 +291,94 @@ def predict_labels(data_scnpy: Optional[AnnData] = None,
     print('Done.')
     return labels, probs
 
+# Get indicies of cells to order them in the cell cycle.
+def cellcycle_order(class_probs: np.ndarray | None = None,
+                    clock_offset: float = None,
+                    include_g0: bool = False):
+    """
+    predict cells order in cell cycle using classifier prediction probabilities
+
+    Parameters
+    ----------
+    class_probs : numpy float array 
+        The class probabilites (predictions) generated from predict_labels function
+   
+    clock_offset : float 
+        The offset to rotate the clock vectors so that G0 or G0/G1 state is not split betweem the begining 
+        and end of the dataset.  
+
+    include_g0 : bool
+        Whether or not to provide G0, G1, and Late G1 or to collapse them into a G0/G1 state. Best practice is to set to True if not applying to neuroepithelial derived cells.
+
+    Returns
+    -------
+    cell_ordered_ind:  numpy int array
+        The indicies of the ordered cells.  This doesn't return the sorted data but the indicies to order the data.
+
+    """
+
+    if (clock_offset is None) and include_g0:
+        clock_offset = np.pi/25
+
+    elif (clock_offset is None) and not include_g0:
+        clock_offset = np.pi/12.5
+
+
+    if include_g0:
+
+        # Initialize arrays for calculating cell angle
+        cycle_order = np.array([4,0,2,5,6,1,3], dtype = 'int')
+        thetas = np.tile( np.arange(0,2*np.pi, 2*np.pi/7) + clock_offset, [class_probs.shape[0], 1])
+        xy_vecs = np.zeros((class_probs.shape[0], 2), dtype = 'float')
+        
+        # Re-order the predictions 
+        vec_r = class_probs[:,cycle_order] 
+
+        # Calculate the xy ordinates for clock positions.
+        vec_x = vec_r * np.cos(thetas)
+        vec_y = vec_r * np.sin(thetas)
+        xy_vecs[:,0] = np.sum(vec_x, axis = 1)
+        xy_vecs[:,1] = np.sum(vec_y, axis = 1)
+
+        # Find the theta angle from 0 to 2pi.
+        ang = np.arctan2(xy_vecs[:,1], xy_vecs[:,0]) 
+        ang[ang<0] = ang[ang<0]+2*np.pi
+
+        # Sort the angles for returning the indicies.  
+        cell_ordered_inds = np.argsort(ang)
+
+    else:
+
+        # Combine Neural G0, G1 and Late G1 into a single class
+        condensed_probs = np.zeros((class_probs.shape[0],5), dtype = class_probs.dtype)
+        condensed_probs[:,0]  = np.sum(class_probs[:,[0,2,4]], axis = 1)
+        condensed_probs[:,1:] = class_probs[:,[5,6,1,3]]
+
+        # Initialize arrays for calculating cell angle
+        thetas = np.tile( np.arange(0,2*np.pi, 2*np.pi/5) + clock_offset, [class_probs.shape[0], 1])
+        xy_vecs = np.zeros((class_probs.shape[0], 2), dtype = 'float')
+
+        # Calculate the xy ordinates for clock positions.       
+        vec_r = condensed_probs
+        vec_x = vec_r * np.cos(thetas)
+        vec_y = vec_r * np.sin(thetas)
+        xy_vecs[:,0] = np.sum(vec_x, axis = 1)
+        xy_vecs[:,1] = np.sum(vec_y, axis = 1)
+
+        # Find the theta angle from 0 to 2pi.
+        ang = np.arctan2(xy_vecs[:,1], xy_vecs[:,0]) 
+        ang[ang<0] = ang[ang<0]+2*np.pi
+
+        # Sort the angles for returning the indicies.  
+        cell_ordered_inds = np.argsort(ang)
+
+    return cell_ordered_inds 
+
 # Plot Umap of data using scanpy umap plot function
 def plot_UMAP(data_scnpy: Optional[AnnData] = None,
-              fig_save_path: pathlib.Path | str | None = None, 
-              n_top_genes: int = 2000):
+              n_top_genes: int = 2000,
+              show_figure: bool = False,
+              fig_save_path: pathlib.Path | str | None = None, ):
 
     """
     Plot UMAP of classified data
@@ -321,6 +404,8 @@ def plot_UMAP(data_scnpy: Optional[AnnData] = None,
     sc.pp.neighbors(data_scnpy)
     sc.tl.umap(data_scnpy)
 
+  
+
     if fig_save_path is None:
         print('Overwriting previous plot')
         fig_save_path = '_ccAFv2_plot.pdf'
@@ -337,7 +422,7 @@ def plot_UMAP(data_scnpy: Optional[AnnData] = None,
                    "Unknown": "#d3d3d3"}
 
     # Plot UMAP of U5 hNSCs
-    sc.pl.umap(data_scnpy, color=['ccAFv2'], palette=plot_cmap, save=fig_save_path)
+    sc.pl.umap(data_scnpy, color=['ccAFv2'], palette=plot_cmap, show = show_figure, save=fig_save_path)
 
     return None
 
@@ -345,6 +430,7 @@ def plot_UMAP(data_scnpy: Optional[AnnData] = None,
 def plot_threshold(class_probs: np.ndarray | None = None, 
                    threshold_levels: np.ndarray | None = None, 
                    include_g0: bool = False,  
+                   show_figure: bool = False,
                    fig_save_path: pathlib.Path | str | None = None):
 
     """
@@ -425,7 +511,8 @@ def plot_threshold(class_probs: np.ndarray | None = None,
         weight_counts[label] += class_perc[vals,:]
 
     # Prepare a color mapping dictionary
-    plot_cmap = {"Neural G0": "#d9a428", 
+    plot_cmap = {"Neural G0": "#d9a428",
+                     "G0/G1": "#FF6600", 
                         "G1": "#f37f73", 
                    "Late G1": "#1fb1a9", 
                          "S": "#8571b2", 
@@ -449,6 +536,161 @@ def plot_threshold(class_probs: np.ndarray | None = None,
     fig.legend(loc="outside center right", frameon=False, reverse = True  )
 
     fig.savefig(file_path)
-    plt.show()
+
+    if show_figure:
+        plt.show()
 
     return None
+
+# Plot Cell-cycle clock to show progress of cells through 
+def plot_cellcycleclock(class_probs: np.ndarray,
+                        labels: List[str], 
+                        clock_offset: float | None = None,
+                        include_g0: bool = False,
+                        show_figure: bool = False,
+                        fig_save_path: pathlib.Path | str | None = None):
+
+    """
+    predict cells order in cell cycle using classifier prediction probabilities
+
+    Parameters
+    ----------
+    class_probs : numpy float array 
+        predictions (preds) ourput from predict_labels function
+   
+    clock_offset : float 
+        The offset to rotate the clock vectors so that G0 or G0/G1 state is not split betweem the begining 
+        and end of the dataset.  
+
+    include_g0 : bool
+        Whether or not to provide G0, G1, and Late G1 or to collapse them into a G0/G1 state. Best practice is to set to True if not applying to neuroepithelial derived cells.
+
+    Returns
+    -------
+    cell_ordered_ind:  numpy int array
+        The indicies of the ordered cells.  This doesn't return the sorted data but the indicies to order the data.
+
+    fig: Matplotlib figure handle 
+        Matplotlib figure handle for saving the figure if needed.
+    """
+    
+    
+    fig_save_path = "ccAFv2_clock_plot.pdf" if fig_save_path is None else fig_save_path
+    # Check the file path for saving figures 
+    file_path = _check_path(fig_save_path)
+
+    if (clock_offset is None) and include_g0:
+        clock_offset = np.pi/25
+
+    elif (clock_offset is None) and not include_g0:
+        clock_offset = np.pi/12.5
+
+    if include_g0:
+
+        lbl_array   = ["Neural G0", "G1", "Late G1", "S","S/G2", "G2/M", "M/Early G1"]
+        offsets = [[-0.2,-0.1],
+                    [0,0],
+                    [-0.1,0],
+                    [-0.05, 0],
+                    [-0.05,-.05],
+                    [-0.05,-0.05],
+                    [0,0]]
+
+        # Initialize arrays for calculating cell angle
+        cycle_order = np.array([4,0,2,5,6,1,3], dtype = 'int')
+        thetas = np.tile( np.arange(0,2*np.pi, 2*np.pi/7) + clock_offset, [class_probs.shape[0], 1])
+        xy_vecs = np.zeros((class_probs.shape[0], 2), dtype = 'float')
+        
+        # Re-order the predictions 
+        vec_r = class_probs[:,cycle_order] 
+
+        # Calculate the xy ordinates for clock positions.
+        vec_x = vec_r * np.cos(thetas)
+        vec_y = vec_r * np.sin(thetas)
+        xy_vecs[:,0] = np.sum(vec_x, axis = 1)
+        xy_vecs[:,1] = np.sum(vec_y, axis = 1)
+
+        # Find the theta angle from 0 to 2pi.
+        ang = np.arctan2(xy_vecs[:,1], xy_vecs[:,0]) 
+        ang[ang<0] = ang[ang<0]+2*np.pi
+
+        # Sort the angles for returning the indicies.  
+        cell_ordered_inds = np.argsort(ang)
+
+    else:
+
+        lbl_array   = ["G0/G1", "S", "S/G2", "G2/M", "M/Early G1"]
+        offsets = [[-0.2,-0.1],
+                [0,0],
+                [-0.1,0],
+                [-0.05, 0],
+                [-0.05,-.05],
+                [-0.05,-0.05],
+                [0,0]]
+
+        cycle_order = [0,5,6,1,5]
+
+        # Combine Neural G0, G1 and Late G1 into a single class
+        condensed_probs = np.zeros((class_probs.shape[0],5), dtype = class_probs.dtype)
+        condensed_probs[:,0]  = np.sum(class_probs[:,[0,2,4]], axis = 1)
+        condensed_probs[:,1:] = class_probs[:,[5,6,1,3]]
+
+        # Initialize arrays for calculating cell angle
+        thetas = np.tile( np.arange(0,2*np.pi, 2*np.pi/5) + clock_offset, [class_probs.shape[0], 1])
+        xy_vecs = np.zeros((class_probs.shape[0], 2), dtype = 'float')
+
+        # Calculate the xy ordinates for clock positions.       
+        vec_r = condensed_probs
+        vec_x = vec_r * np.cos(thetas)
+        vec_y = vec_r * np.sin(thetas)
+        xy_vecs[:,0] = np.sum(vec_x, axis = 1)
+        xy_vecs[:,1] = np.sum(vec_y, axis = 1)
+
+        # Find the theta angle from 0 to 2pi.
+        ang = np.arctan2(xy_vecs[:,1], xy_vecs[:,0]) 
+        ang[ang<0] = ang[ang<0]+2*np.pi
+
+        # Sort the angles for returning the indicies.  
+        cell_ordered_inds = np.argsort(ang)
+
+
+    plot_cmap = {"Neural G0": "#d9a428",
+                     "G0/G1": "#FF6600", 
+                        "G1": "#f37f73", 
+                   "Late G1": "#1fb1a9", 
+                         "S": "#8571b2", 
+                      "S/G2": "#db7092", 
+                      "G2/M": "#3db270",
+                "M/Early G1": "#6d90ca",  
+                   "Unknown": "#d3d3d3"}
+
+    cmap_list = []
+    for lbl in labels:
+        cmap_list.append(plot_cmap[lbl])
+
+    # Plot the cell cycle clock
+    fig, ax = plt.subplots(figsize = [8,8])
+    ax.set_title('ccAFv2 Clock Plot', fontweight = 'bold')
+
+    # Loop through intividual points and plot them.
+    for n in range(xy_vecs.shape[0]):
+        ax.plot(xy_vecs[n,0], xy_vecs[n,1], '.', color = cmap_list[n])
+
+    ax.set_xlim(-1.25,1.25)
+    ax.set_ylim(-1.25,1.25)
+
+    symbol_list = ['.','.', 's', '^', 'v', 's', 'v']
+
+    for n, (angle, text_label) in enumerate(zip(thetas[0,:], lbl_array), start = 0):
+        ax.plot([0,np.cos(angle)], [0, np.sin(angle)], '-', color = [0,0,0,0.4])
+        ax.plot(np.cos(angle), np.sin(angle), marker = symbol_list[n], color = plot_cmap[text_label])
+
+        x =  1.05*np.cos(angle)+offsets[n][0]
+        y =  1.05*np.sin(angle)+offsets[n][1]
+        ax.text(x,y, text_label)
+
+    fig.savefig(file_path)   
+    if show_figure: 
+        plt.show()
+    
+    return cell_ordered_inds, fig

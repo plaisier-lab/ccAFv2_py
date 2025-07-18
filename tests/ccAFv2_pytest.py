@@ -1,3 +1,4 @@
+
 ##########################################################
 ## OncoMerge:  ccAFve_pytest.py                         ##
 ##  ______     ______     __  __                        ##
@@ -85,10 +86,12 @@ if __name__ == "__main__":
     print('Loading test data and comparison data...')
 
     # Load hdf5 input and output data to test the classifier installation
-    oup_data_path = pathlib.Path("./tests/R_ccAFv2_out.hdf5")
+    cwdir = pathlib.Path(__file__).parent
+
+    oup_data_path = cwdir / "R_ccAFv2_out.hdf5"
     oup_data = loadData(oup_data_path)
 
-    inp_data_path = pathlib.Path("./tests/R_ccAFv2_inp.hdf5")
+    inp_data_path =  cwdir / "R_ccAFv2_inp.hdf5"
     inp_data = loadData(inp_data_path)
 
  
@@ -122,19 +125,26 @@ if __name__ == "__main__":
     data_path = pathlib.Path("../Data/W8-1_normalized_ensembl.h5ad")
     pwc8_scdata = sc.read_h5ad(data_path)
 
-    # Run ccAFv2 to predict cell labels
-    labels, predictions = ccAFv2.predict_labels(pwc8_scdata, species='human', gene_id='ensembl', include_g0 = True)
+    g0_switch = False
 
-    print('Adding predicted labels to dataset')
+    # Run ccAFv2 to predict cell labels
+    labels, predictions = ccAFv2.predict_labels(pwc8_scdata, species='human', gene_id='ensembl', include_g0 = g0_switch)
+
+
     # Save into scanpy object
+    print('Adding predicted labels to dataset')
     pwc8_scdata.obs['ccAFv2'] = labels
 
     print('Performing UMAP plotting')
-    ccAFv2.plot_UMAP(pwc8_scdata)
+    ccAFv2.plot_UMAP(pwc8_scdata, show_figure = True)
 
     print('Generating Threshold Plot')
-    ccAFv2.plot_threshold(class_probs = predictions, include_g0 = True)
+    ccAFv2.plot_threshold(class_probs = predictions, include_g0 = g0_switch, show_figure = True)
 
+    print('Calculating cell-cycle order')
+    cell_orders = ccAFv2.cellcycle_order(predictions, include_g0 = g0_switch)
 
+    print('Ploting Cell Cycle Clock')
+    cell_orders, fig = ccAFv2.plot_cellcycleclock(class_probs = predictions, labels = labels, include_g0 = g0_switch, show_figure = True)
 
     

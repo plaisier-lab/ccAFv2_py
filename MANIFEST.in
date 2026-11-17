@@ -1,7 +1,5 @@
 include ccAFv2/ccAFv2_genes.csv
 include ccAFv2/ccAFv2_classes.txt
-include tests/ccAFv2_pytest.py
-include tests/R_ccAFv2_inp.hdf5
-include tests/R_ccAFv2_oup.hdf5
+include ccAFv2/seurat_ref_U5_hNSC_SCT_7_29_2026.csv
 
 include README.md

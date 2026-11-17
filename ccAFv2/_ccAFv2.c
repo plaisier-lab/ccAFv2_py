@@ -16639,10 +16639,10 @@ static PyObject *__pyx_unpickle_Enum__set_state(struct __pyx_MemviewEnum_obj *__
 }
 
 /* "ccAFv2/_ccAFv2.pyx":27
- *     void entry(const float[1][861] inp_tensor, float[1][7] oup_tensor)
+ *     void entry(const float[1][871] inp_tensor, float[1][7] oup_tensor)
  * 
  * def run_model(double[:, ::1] input):             # <<<<<<<<<<<<<<
- *     cdef float[1][861] inp_vec
+ *     cdef float[1][871] inp_vec
  *     cdef float[1][7] oup_vec
 */
 
@@ -16754,7 +16754,7 @@ static PyObject *__pyx_pf_6ccAFv2_7_ccAFv2_run_model(CYTHON_UNUSED PyObject *__p
   /* "ccAFv2/_ccAFv2.pyx":31
  *     cdef float[1][7] oup_vec
  * 
- *     for i in range(861):             # <<<<<<<<<<<<<<
+ *     for i in range(871):             # <<<<<<<<<<<<<<
  *         inp_vec[0][i] = <float>input[0][i]
  * 
 */
@@ -16763,7 +16763,7 @@ static PyObject *__pyx_pf_6ccAFv2_7_ccAFv2_run_model(CYTHON_UNUSED PyObject *__p
 
     /* "ccAFv2/_ccAFv2.pyx":32
  * 
- *     for i in range(861):
+ *     for i in range(871):
  *         inp_vec[0][i] = <float>input[0][i]             # <<<<<<<<<<<<<<
  * 
  *     entry(inp_vec, oup_vec)
@@ -16819,10 +16819,10 @@ static PyObject *__pyx_pf_6ccAFv2_7_ccAFv2_run_model(CYTHON_UNUSED PyObject *__p
   goto __pyx_L0;
 
   /* "ccAFv2/_ccAFv2.pyx":27
- *     void entry(const float[1][861] inp_tensor, float[1][7] oup_tensor)
+ *     void entry(const float[1][871] inp_tensor, float[1][7] oup_tensor)
  * 
  * def run_model(double[:, ::1] input):             # <<<<<<<<<<<<<<
- *     cdef float[1][861] inp_vec
+ *     cdef float[1][871] inp_vec
  *     cdef float[1][7] oup_vec
 */
 
@@ -18760,10 +18760,10 @@ __Pyx_RefNannySetupContext("PyInit__ccAFv2", 0);
   __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
 
   /* "ccAFv2/_ccAFv2.pyx":27
- *     void entry(const float[1][861] inp_tensor, float[1][7] oup_tensor)
+ *     void entry(const float[1][871] inp_tensor, float[1][7] oup_tensor)
  * 
  * def run_model(double[:, ::1] input):             # <<<<<<<<<<<<<<
- *     cdef float[1][861] inp_vec
+ *     cdef float[1][871] inp_vec
  *     cdef float[1][7] oup_vec
 */
   __pyx_t_5 = __Pyx_CyFunction_New(&__pyx_mdef_6ccAFv2_7_ccAFv2_1run_model, 0, __pyx_mstate_global->__pyx_n_u_run_model, NULL, __pyx_mstate_global->__pyx_n_u_ccAFv2__ccAFv2, __pyx_mstate_global->__pyx_d, ((PyObject *)__pyx_mstate_global->__pyx_codeobj_tab[0])); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 27, __pyx_L1_error)

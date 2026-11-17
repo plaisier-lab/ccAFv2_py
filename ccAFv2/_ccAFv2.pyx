@@ -22,13 +22,13 @@
 # distutils: language = c
 
 cdef extern from "C_ccAFv2.h":
-    void entry(const float[1][861] inp_tensor, float[1][7] oup_tensor)
+    void entry(const float[1][871] inp_tensor, float[1][7] oup_tensor)
 
 def run_model(double[:, ::1] input):
-    cdef float[1][861] inp_vec
+    cdef float[1][871] inp_vec
     cdef float[1][7] oup_vec
 
-    for i in range(861):
+    for i in range(871):
         inp_vec[0][i] = <float>input[0][i]
 
     entry(inp_vec, oup_vec)

@@ -305,7 +305,7 @@ def _predict_classes(prep_data, classes = _classes):
         oup_preds[ind,:] = run_model(inp_data[ind,:].reshape(1,871))
 
     prob_df = pd.DataFrame(oup_preds)
-    prob_df.index = prep_data.columns
+    prob_df.index = prep_data.index
     prob_df.columns = classes
 
     return prob_df

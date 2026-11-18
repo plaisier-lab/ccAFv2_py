@@ -20,6 +20,7 @@
 
 # Run this file to test ccAFv2 installation and scanpy functions
 
+# pip install --force-reinstall git+https://github.com/plaisier-lab/ccAFv2_py.git 
 
 ##########################################
 ## Load Python packages for classifiers ##
@@ -147,4 +148,14 @@ if __name__ == "__main__":
     print('Ploting Cell Cycle Clock')
     cell_orders, fig = ccAFv2.plot_cellcycleclock(class_probs = predictions, labels = labels, include_g0 = g0_switch, show_figure = True)
 
-    
+
+
+import ccAFv2
+import numpy  as np
+import scanpy as sc
+
+data_path = '/files/ccAFv2_py/data/W8-1_normalized_ensembl.h5ad'
+pcw8_adata = sc.read_h5ad(data_path)
+pcw8_adata = ccAFv2.predict_labels(pcw8_adata)
+
+

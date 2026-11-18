@@ -410,10 +410,8 @@ def predict_labels(new_data, species='human', gene_id='ensembl', threshold=0, in
     # 3. Calculate angular bins
     n_bins = 10
     tmp_df = angles_to_vonmises_bins(list(theta), n_bins=n_bins, kappa=4.0)
-    tmp_df.to_csv(f'{savedir}/theta_to_bin_probs_NOT_scaled_{iteration}.csv')
     tmp_df.index = meta_data.index
     tmp_df_scaled = _scale(tmp_df.T).T
-    tmp_df_scaled.to_csv(f'{savedir}/theta_to_bin_probs_scaled_{iteration}.csv')
     prep_data_angBins = pd.concat([prep_data, tmp_df_scaled], axis=1)
 
 

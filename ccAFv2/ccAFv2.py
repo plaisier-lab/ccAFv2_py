@@ -404,8 +404,8 @@ def predict_labels(new_data, species='human', gene_id='ensembl', threshold=0, in
     new_data = project_cycle_from_anndata(new_data,
                                           u5_ref)
 
-    projection = adata.obsm["cc_Projection"]
-    theta = adata.obs["thetaPos"]
+    projection = new_data.obsm["cc_Projection"]
+    theta = new_data.obs["thetaPos"]
 
     # 3. Calculate angular bins
     n_bins = 10

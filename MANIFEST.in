@@ -1,5 +1,6 @@
 include ccAFv2/ccAFv2_genes.csv
 include ccAFv2/ccAFv2_classes.txt
+include ccAFv2/rownames_u5_ref.csv
 include ccAFv2/seurat_ref_U5_hNSC_SCT_7_29_2026.csv
 
 include README.md

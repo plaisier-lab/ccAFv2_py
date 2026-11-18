@@ -18,50 +18,298 @@
 ## mention who built it. Thanks. :-)                    ##
 ##########################################################
 
+###################
+## Load pacakges ##
+###################
+
 import numpy  as np
 import pandas as pd
 import scanpy as sc
 import pathlib
 import warnings
 
-from typing import Optional, Literal, Dict, List
-
-from ._ccAFv2            import run_model
-from anndata             import AnnData
+from ._ccAFv2 import run_model
+from anndata  import AnnData
 from importlib.resources import files
 import matplotlib.pyplot as plt
+matplotlib.use('Agg')
+matplotlib.rcParams['pdf.fonttype'] = 42
+from matplotlib.backends.backend_pdf import PdfPages
 
-from scipy.stats           import zscore
+from scipy.stats import vonmises
+from scipy.stats import zscore
 from sklearn.preprocessing import StandardScaler
 sc.settings.verbosity = 0
 
-in_path = files("ccAFv2").joinpath("ccAFv2_genes.csv")
-_genes_all = pd.read_csv(in_path, index_col=0, header=0)
 
-in_path = files("ccAFv2").joinpath("ccAFv2_classes.txt")
-_pred_classes = tuple(pd.read_csv(in_path, header=None)[0])
+############################
+## Load model information ##
+############################
+
+with path('ccAFv2', 'ccAFv2_genes.csv') as inPath:
+    _genes_all = pd.read_csv(inPath, index_col=0, header=0)
+with path('ccAFv2', 'ccAFv2_classes.txt') as inPath:
+    _classes = list(pd.read_csv(inPath, header=None)[0])
+
+
+#####################################
+## Load circular manifold loadings ##
+#####################################
+
+with path('ccAFv2', 'seurat_ref_U5_hNSC_SCT_7_29_2026.csv') as inPath:
+    _u5_ref = pd.read_csv(inPath, index_col=0, header=0)
+with path('ccAFv2', 'rownames_u5_ref.csv') as inPath:
+    _rownames_u5_ref = pd.read_csv(inPath, index_col=0, header=0)
+
 
 ###############
 ## Functions ##
 ###############
 
-# Scale data for classification
-def _scale(data):
-    """
-    Standardize or normalize numeric data using scikit-learn's StandardScaler.
 
-    Parameters:
-    - data: 2D NumPy array or list of lists
-
-    Returns:
-    - Scaled data (NumPy array)
+# Scale data same way in R and Python
+def _scale(df1):
     """
-    scaler = StandardScaler()
-    scaled_data = scaler.fit_transform(data)
-    return scaled_data
+    scale takes in a pandas dataframe and applies scales the values into Z-scores across rows.
+
+    Parameters
+    ----------
+    df1 : pd.DataFrame
+        DataFrame of scRNA-seq data to be scaled.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame of scRNA-seq data that has been scaled.
+    """
+    return (df1.subtract(df1.mean(axis=1),axis=0)).div(df1.std(axis=1),axis=0)
+
+
+# Integrate probability from von Mises distrubiton into equally spaced angular bins
+def angles_to_vonmises_bins(angles, n_bins=10, kappa=4.0):
+    """
+    Convert angles (radians) into n-bin probability vectors using
+    a von Mises distribution centered at each angle.
+
+    Parameters
+    ----------
+    angles : array-like
+        Angles in radians.
+    n_bins : int
+        Number of circular bins.
+    kappa : float
+        Concentration parameter of the von Mises distribution.
+        Larger values produce narrower distributions.
+
+    Returns
+    -------
+    pd.DataFrame
+        Rows correspond to input angles.
+        Columns are bin probabilities summing to 1.
+    """
+    angles = np.asarray(angles) % (2 * np.pi)
+
+    # Bin edges
+    edges = np.linspace(0, 2 * np.pi, n_bins + 1)
+    prob_vectors = []
+    for mu in angles:
+        probs = []
+        for left, right in zip(edges[:-1], edges[1:]):
+            # Probability mass in this bin
+            p = vonmises.cdf(right, kappa, loc=mu) - \
+                vonmises.cdf(left, kappa, loc=mu)
+            # Handle wrap-around numerically
+            if p < 0:
+                p += 1.0
+            probs.append(p)
+        probs = np.array(probs)
+        probs /= probs.sum()  # normalize
+        prob_vectors.append(probs)
+    return pd.DataFrame(prob_vectors, columns=[f"bin_{i}" for i in range(n_bins)])
+
+
+# Project transcriptomic data into reference embedding
+def project_cycle_from_matrix(expr, ref_m, center_pc1=0, center_pc2=0):
+    """
+    Project expression data onto reference component loadings.
+
+    Parameters
+    ----------
+    expr : pandas.DataFrame
+        Expression matrix with genes as rows and cells as columns.
+    ref_m : pandas.DataFrame
+        Reference loadings with genes as rows and components as columns.
+    center_pc1, center_pc2 : float
+        Coordinates to subtract from the first two projected components.
+
+    Returns
+    -------
+    dict
+        'projection': cells × components DataFrame.
+        'position': Series containing each cell's angle in radians.
+    """
+    if not expr.index.is_unique or not ref_m.index.is_unique:
+        raise ValueError("Gene names must be unique in expr and ref_m.")
+
+    if ref_m.shape[1] < 2:
+        raise ValueError("The reference must contain at least two components.")
+
+    # Preserve the order of overlapping genes in expr.
+    genes = expr.index[expr.index.isin(ref_m.index)]
+
+    if len(genes) == 0:
+        raise ValueError(
+            "No overlapping genes between the expression matrix "
+            "and the reference."
+        )
+
+    print(
+        f"    The number of projection genes found in the new data "
+        f"is {len(genes)}."
+    )
+
+    reference = ref_m.loc[genes].copy()
+
+    # Transpose to cells × genes and center each gene across cells.
+    expression = expr.loc[genes].to_numpy(dtype=float).T
+    expression = expression - expression.mean(axis=0, keepdims=True)
+
+    projection = expression @ reference.to_numpy(dtype=float)
+
+    projection[:, 0] -= center_pc1
+    projection[:, 1] -= center_pc2
+
+    # Counterclockwise angle from the positive PC1 axis.
+    theta = np.mod(
+        np.arctan2(projection[:, 1], projection[:, 0]),
+        2 * np.pi,
+    )
+
+    projection = pd.DataFrame(
+        projection,
+        index=expr.columns,
+        columns=reference.columns,
+    )
+    projection.attrs["rotation"] = reference
+
+    position = pd.Series(
+        theta,
+        index=expr.columns,
+        name="position",
+    )
+
+    return {
+        "projection": projection,
+        "position": position,
+    }
+
+
+# Project transcriptomic data into reference embedding
+def project_cycle_from_anndata( adata, ref_m, layer=None, reduction_name="cc_Projection", position_col="thetaPos", center_pc1=0,center_pc2=0):
+    """
+    Project AnnData expression data onto a reference embedding.
+
+    Uses adata.X when layer=None, otherwise adata.layers[layer].
+    Modifies and returns adata.
+
+    Results are stored in:
+        adata.obsm[reduction_name]
+        adata.obs[position_col]
+        adata.uns[reduction_name]
+    """
+    if not adata.var_names.is_unique or not ref_m.index.is_unique:
+        raise ValueError("Gene names must be unique in adata and ref_m.")
+
+    genes = adata.var_names[adata.var_names.isin(ref_m.index)]
+
+    if len(genes) == 0:
+        raise ValueError(
+            "No overlapping genes between AnnData and the reference."
+        )
+
+    # Subset before converting sparse data to a dense matrix.
+    subset = adata[:, genes]
+    expression = subset.X if layer is None else subset.layers[layer]
+
+    if sparse.issparse(expression):
+        expression = expression.toarray()
+
+    expr = pd.DataFrame(
+        np.asarray(expression).T,
+        index=genes,
+        columns=adata.obs_names,
+    )
+
+    result = project_cycle_from_matrix(
+        expr=expr,
+        ref_m=ref_m,
+        center_pc1=center_pc1,
+        center_pc2=center_pc2,
+    )
+
+    adata.obsm[reduction_name] = result["projection"].to_numpy()
+
+    # Preserve the exact rotation/reflection formula from your R code.
+    rotation = 0.225 * np.pi
+    adata.obs[position_col] = (
+        2 * np.pi
+        - np.mod(result["position"] - rotation, 2 * np.pi)
+    )
+
+    adata.uns[reduction_name] = {
+        "rotation": result["projection"].attrs["rotation"],
+        "components": ref_m.columns.astype(str).tolist(),
+    }
+
+    return adata
+
+
+# Use ccAFv2 classifier to calculate class probabilities
+def _predict_classes(prep_data, classes = _classes):
+    """
+    _predict_classes takes in a pandas dataframe and the trained ccAFv2 model.
+
+    Parameters
+    ----------
+    prep_data : pd.DataFrame
+        DataFrame of scRNA-seq data to be classified.
+        rows need to be cells and columns need to be the 861 classifer genes
+        The gene order is given in the file ccAFv2_gens.csv
+
+    Returns
+    -------
+    out_preds: flaot32 numpy array of probabilities
+        rows are the cell samples
+        columns are classifiers given by the order in ccAFv2_classes.txt
+
+    """
+    if prep_data.shape[1] != 871:
+        raise RuntimeError('Input data frame not the right size for predictions.  Please check the integrity of the gene list')
+
+    if not prep_data.shape[0]:
+        raise RuntimeError('There are no cells in the input data')
+
+    print('  Predicting cell cycle state probabilities...')
+    # Create output array to receive data.
+    oup_preds = np.zeros((prep_data.shape[0], 7), dtype = 'float32')
+
+    # Change the pandas dataframe to a numpy array of float32
+    inp_data = prep_data.to_numpy()
+    inp_data = np.ascontiguousarray(inp_data, dtype = np.float64)
+
+    # Loop through array to make predictions
+    for ind in range(inp_data.shape[0]):
+        oup_preds[ind,:] = run_model(inp_data[ind,:].reshape(1,871))
+
+    prob_df = pd.DataFrame(oup_preds)
+    prob_df.index = prep_data.columns
+    prob_df.columns = classes
+
+    return prob_df
+
 
 # Prepare test data for predicting
-def _normalize_data(data_scnpy, genes_classified):
+def _prep_predict_data(data_scanpy, genes):
     """
     prep_predict_data takes in a pandas dataframe and the trained ccAFv2 model.
 
@@ -69,8 +317,8 @@ def _normalize_data(data_scnpy, genes_classified):
     ----------
     data : pd.DataFrame
         DataFrame of scRNA-seq data to be classified.
-    genes_classified :  List 
-        List of genes and order of the genes the classifier is trained on.
+    model : keras.models.sequential
+        Trained ccAFv2 sequential keras model.
 
     Returns
     -------
@@ -78,163 +326,46 @@ def _normalize_data(data_scnpy, genes_classified):
         Series of labels for each single cell.
 
     """
-
-    min_genes = 689
-
     print('    Preparing data for classification...')
-   # Make indicies unique just incase there are doubling up on gene names.  
-    data_scnpy.var_names_make_unique()
-    
-    # Remove all genes with zero counts.
-    sc.pp.filter_genes(data_scnpy, min_cells=1)
 
-    # Create dense pandas arrays using the cells observerd and the union of the classified genes and genes in the dataset.
-    data_index = data_scnpy.obs_names
-    data_cols  = list(set(data_scnpy.var_names) & set(genes_classified))
+    # Uniquify the gene names
+    data_scanpy.var_names_make_unique()
 
-    num_marker_genes = len(data_cols)
-    num_missing_genes = len(genes_classified)-len(data_cols)
+    # Remove all genes with zero counts
+    sc.pp.filter_genes(data_scanpy, min_cells=1)
 
-    print(f'    Marker genes present in this dataset: {len(data_cols)}')
-    print(f'    Missing marker genes in this dataset: {len(genes_classified)-len(data_cols)}')
-    
-    # Raise a warning if too few genes are present in the dataset.
-    if min_genes >= num_marker_genes:
-        warnings.warn("Less than 80% of marker genes are present in this dataset.  The predictions may not be accurate", UserWarning)
+    # Restrict data to classifier genes
+    in_both = list(set(genes).intersection(data_scanpy.var_names))
+    if(len(in_both)>0):
+        print('    Marker genes present in this dataset: '+str(len(in_both)))
+        print('    Missing marker genes in this dataset: '+str(len(set(genes))-len(in_both)))
 
-    # Check to make sure that at lease 80% of classifier genes are present.
-    if len(data_cols) > 0:
+        # Scale the data subset with all available genes
+        data_subset = data_scanpy[:,in_both]
+        if isspmatrix(data_scanpy.X):
+            data_subset = pd.DataFrame(data_subset.X.todense(), index = data_subset.obs_names, columns = data_subset.var_names)
+        else:
+            data_subset = pd.DataFrame(data_subset.X, index = data_subset.obs_names, columns = data_subset.var_names)
+        data_df = pd.DataFrame(_scale(data_subset), index = data_subset.index, columns = data_subset.columns)
 
-        # Z-score the data that is observed and overlaping with the gene_set data. 
-        scaled_data = _scale(data_scnpy[:,data_cols].X.toarray())
-        data_temp   = pd.DataFrame(scaled_data, index = data_index, columns = data_cols)
-      
-        # Reindex the temporary array to add in missing columns/genes and ensure the same column order as the original classifer.  
-        # Fill the missing values with the minimum values of the dataset.  
-        data_zscored  = data_temp.reindex(columns = genes_classified, fill_value = data_temp.values.min())
-    
-        return data_zscored
-
+        # Add minimum values for missing genes
+        missing = set(genes).difference(data_df.columns)
+        if len(missing)>0:
+            data_df_wMissing = pd.concat([data_df, pd.DataFrame(data_df.values.min(), index=data_df.index, columns = missing)], axis=1)
+            return data_df_wMissing[list(genes)]
+        else:
+            return data_df
     else:
-        raise RuntimeError('Check species and gene_id, because there is no overlap between input genes and classifier genes!\n Or too few genes are present in this dataset')
+        raise RuntimeError('Check species and gene_id, because there is no overlap between input genes and classifier genes!')
 
-# Create the correct class_map that includes g0 or excludes g0
-def _create_classmap(include_g0 = False):
-    '''
-    Creates a dictionary class_map to relate indicies of the ccAFv2 classifier output vector to 
-    values returned from a numpy argmax function. Since there are only 7 classes and then one 
-    threshold value.  
+# Predict labels
+def predict_labels(new_data, species='human', gene_id='ensembl', threshold=0, include_g0=False, genes_all=_genes_all, classes=_classes, u5_ref = _u5_ref, rownames_u5_ref = _rownames_u5_ref):
+    """
+    predict_new_data takes in a pandas dataframe and the trained ccAFv2 model.
 
     Parameters
     ----------
-    include_g0:  bool default to False.  
-
-    Returns
-    ----------
-    class_map:  Dict dictionary mapping values to class labels 
-    '''
-    if include_g0:
-        class_map       = { 0 : 'G1',
-                            1 : 'G2/M',
-                            2 : 'Late G1',
-                            3 : 'M/Early G1',
-                            4 : 'Neural G0',
-                            5 : 'S',
-                            6 : 'S/G2',
-                            7 : 'Unknown'}
-        
-    else:
-        class_map      = {  0 : 'G0/G1',
-                            1 : 'G2/M',
-                            2 : 'G0/G1',
-                            3 : 'M/Early G1',
-                            4 : 'G0/G1',
-                            5 : 'S',
-                            6 : 'S/G2',
-                            7 : 'Unknown'}
-      
-    return class_map
-
-# Check the figure files to make sure that a path exists.  
-def _check_path(file_name):
-    '''
-    Checks if path is an absolute path.  If not it assumes a single file name, creates a figure 
-    directory, and then returns a Path for saving the file.  
-    
-    Parameters:
-        file_name (str): The name of the file (e.g., 'plot.png').
-    
-    Returns:
-        Path: Either absolute path provided as Path object or path of file in 'figures' directory.
-    '''
-
-    temp_path =  pathlib.Path(file_name)
-    # Check if path is absolute.  
-    if temp_path.is_absolute():
-        # Return the temp_path as a complete path
-        return temp_path
-    else:
-        # Otherwise create a figure directory 
-        current_path = pathlib.Path.cwd()
-        # Define the figures directory
-        figure_dir = current_path / 'figures'
-
-        figure_dir.mkdir(exist_ok = True)
-
-        return figure_dir / file_name
-        
-# Use ccAFv2 classifier to calculate class probabilities
-def _predict_classes(data_scnpy):
-    """
-    _predict_classes takes in a pandas dataframe and the trained ccAFv2 model.
-
-    Parameters
-    ----------
-    data_scnpy : pd.DataFrame
-        DataFrame of scRNA-seq data to be classified.  
-        rows need to be cells and columns need to be the 861 classifer genes
-        The gene order is given in the file ccAFv2_gens.csv
-    
-    Returns
-    -------
-    out_preds: flaot32 numpy array of probabilities 
-        rows are the cell samples
-        columns are classifiers given by the order in ccAFv2_classes.txt
-
-    """
-    if data_scnpy.shape[1] != 861:
-        raise RuntimeError('Input data frame not the right size for predictions.  Please check the integrity of the gene list')
-    
-    if not data_scnpy.shape[0]:
-        raise RuntimeError('There are no cells in the input data')
-
-    print('  Predicting cell cycle state probabilities...')
-    # Create output array to receive data.
-    oup_preds = np.zeros((data_scnpy.shape[0], 7), dtype = 'float32')
-
-    # Change the pandas dataframe to a numpy array of float32 
-    inp_data = data_scnpy.to_numpy()
-    inp_data = np.ascontiguousarray(inp_data, dtype = np.float64)
-
-    # Loop through array to make predictions
-    for ind in range(inp_data.shape[0]):
-        oup_preds[ind,:] = run_model(inp_data[ind,:].reshape(1,861))
-    
-    return oup_preds
-
-# Predict labels from class probabilities with rejection threshold
-def predict_labels(data_scnpy: Optional[AnnData] = None, 
-                    species: Literal['human', 'mouse'] = 'human', 
-                    gene_id: Literal['ensembl', 'symbol'] = 'ensembl', 
-                    threshold: float = 0.5, 
-                    include_g0: bool = False,  
-                    genes_all: Dict[str, List[str]] = _genes_all):
-    """
-    predict_data_scnpy takes in a pandas dataframe and the trained ccAFv2 model.
-
-    Parameters
-    ----------
-    data_scnpy : annData object
+    new_data : annData object
          New scRNA-seq dataset to be classified.
     species: string
          Species of the cells to be classified, currently supports 'human' and 'mouse'.
@@ -247,138 +378,71 @@ def predict_labels(data_scnpy: Optional[AnnData] = None,
 
     Returns
     -------
-    labels:  pd.Series:
+    pd.Series
         Series of labels for each single cell.
-    
-    probs: # samples x 8 float64 np.array
-        Probabilies of classes with the last row being the 'Unknown' threshold catagory
 
     """
-
-    class_map = _create_classmap(include_g0)
-    
-    # Determin the number of classes and add one more for the unknown value
-    n_classes = len(class_map)
-
-    # Create array fpr probability values.  initialize the array to the unknown class threshold value.  
-    probs_thresh = np.full((data_scnpy.shape[0], n_classes), fill_value = threshold, dtype = 'float32')
-
     print('Running ccAFv2:')
 
-    # Select the correct species
-    genes = genes_all[f'{species}_{gene_id}'].tolist()
+    ## Prepare gene exprssion data for 861 features
+    # Get a list of all genes based on species and gene ID
+    genes = _genes_all[species+'_'+gene_id]
 
-    # Normalize data, organize gene order, and fill in empty values.
-    pred_data = _normalize_data(data_scnpy, genes)
+    # Prepare gene expression data for prediction
+    pred_data = _prep_predict_data(new_data, genes)
 
-    # Make predictions from the data using the ccAFv2 classifier.
-    probs = _predict_classes(pred_data)
-    
-    # Fill in the predicted probabilities.
-    probs_thresh[:, :n_classes-1] = probs
+
+    ## Add 10 angular bins
+    # 1. Load up the U5 refrence loadings
+    u5_ref_rownames = rownames_u5_ref[species+'_'+gene_id]
+    rownames(u5_ref) = u5_ref_rownames
+
+    # 2. Project new_data onto reference
+    new_data = project_cycle_from_anndata(new_data,
+                                          u5_ref,
+                                          layer="scale.data")
+
+    projection = adata.obsm["cc_Projection"]
+    theta = adata.obs["thetaPos"]
+
+    # 3. Calculate angular bins
+    n_bins = 10
+    tmp_df = angles_to_vonmises_bins(list(theta), n_bins=n_bins, kappa=4.0)
+    tmp_df.to_csv(f'{savedir}/theta_to_bin_probs_NOT_scaled_{iteration}.csv')
+    tmp_df.index = meta_data.index
+    tmp_df_scaled = _scale(tmp_df.T).T
+    tmp_df_scaled.to_csv(f'{savedir}/theta_to_bin_probs_scaled_{iteration}.csv')
+    prep_data_angBins = pd.concat([prep_data, tmp_df_scaled], axis=1)
+
+
+    ## Predict probabilities for each class using classifier
+    probs_df = _predict_classes(pred_data_angBins, classes = classes)
 
     print('  Choosing cell cycle state...')
 
-    # Find the column of the highest probability value.  
-    # Argmax gives the equivalent of >= thresh since multiple values will return the lower index.
-    probs_call = np.argmax(probs_thresh, axis = 1)
+    # Generate labels using argmax for the class
+    labels = np.array([classes[np.argmax(i)] for i in probs_df.to_numpy()])
 
-    # Create a pandas series and map the values to labels using the class_map dictionary.
-    labels = pd.Series(data = probs_call, 
-                       index = data_scnpy.obs_names, 
-                       name = 'Cell State').map(class_map).astype('category')
+    # Threshold the probabilites, and set to unknown if not certain enough
+    labels[np.where([np.max(i) < threshold for i in probs_df.to_numpy()])] = 'Unknown'
 
-    print('Done.')
-    return labels, probs
-
-# Get indicies of cells to order them in the cell cycle.
-def cellcycle_order(class_probs: np.ndarray | None = None,
-                    clock_offset: float = None,
-                    include_g0: bool = False):
-    """
-    predict cells order in cell cycle using classifier prediction probabilities
-
-    Parameters
-    ----------
-    class_probs : numpy float array 
-        The class probabilites (predictions) generated from predict_labels function
-   
-    clock_offset : float 
-        The offset to rotate the clock vectors so that G0 or G0/G1 state is not split betweem the begining 
-        and end of the dataset.  
-
-    include_g0 : bool
-        Whether or not to provide G0, G1, and Late G1 or to collapse them into a G0/G1 state. Best practice is to set to True if not applying to neuroepithelial derived cells.
-
-    Returns
-    -------
-    cell_ordered_ind:  numpy int array
-        The indicies of the ordered cells.  This doesn't return the sorted data but the indicies to order the data.
-
-    """
-
-    if (clock_offset is None) and include_g0:
-        clock_offset = np.pi/25
-
-    elif (clock_offset is None) and not include_g0:
-        clock_offset = np.pi/12.5
-
-
-    if include_g0:
-
-        # Initialize arrays for calculating cell angle
-        cycle_order = np.array([4,0,2,5,6,1,3], dtype = 'int')
-        thetas = np.tile( np.arange(0,2*np.pi, 2*np.pi/7) + clock_offset, [class_probs.shape[0], 1])
-        xy_vecs = np.zeros((class_probs.shape[0], 2), dtype = 'float')
-        
-        # Re-order the predictions 
-        vec_r = class_probs[:,cycle_order] 
-
-        # Calculate the xy ordinates for clock positions.
-        vec_x = vec_r * np.cos(thetas)
-        vec_y = vec_r * np.sin(thetas)
-        xy_vecs[:,0] = np.sum(vec_x, axis = 1)
-        xy_vecs[:,1] = np.sum(vec_y, axis = 1)
-
-        # Find the theta angle from 0 to 2pi.
-        ang = np.arctan2(xy_vecs[:,1], xy_vecs[:,0]) 
-        ang[ang<0] = ang[ang<0]+2*np.pi
-
-        # Sort the angles for returning the indicies.  
-        cell_ordered_inds = np.argsort(ang)
-
+    # If include_g0 is set to False then combine Neural G0, G1, and Late G1
+    if not include_g0:
+        labels[np.where(labels=='Neural G0')] = 'G0/G1'
+        labels[np.where(labels=='G1')] = 'G0/G1'
+        labels[np.where(labels=='Late G1')] = 'G0/G1'
+        labels = pd.Categorical(labels, categories=['G0/G1', 'S', 'S/G2', 'G2/M', 'M/Early G1', 'Unknown'], ordered=True)
     else:
+        labels = pd.Categorical(labels, categories=['Neural G0', 'G1', 'Late G1', 'S', 'S/G2', 'G2/M', 'M/Early G1', 'Unknown'], ordered=True)
+    print('Done.')
+    return labels, probs_df
 
-        # Combine Neural G0, G1 and Late G1 into a single class
-        condensed_probs = np.zeros((class_probs.shape[0],5), dtype = class_probs.dtype)
-        condensed_probs[:,0]  = np.sum(class_probs[:,[0,2,4]], axis = 1)
-        condensed_probs[:,1:] = class_probs[:,[5,6,1,3]]
-
-        # Initialize arrays for calculating cell angle
-        thetas = np.tile( np.arange(0,2*np.pi, 2*np.pi/5) + clock_offset, [class_probs.shape[0], 1])
-        xy_vecs = np.zeros((class_probs.shape[0], 2), dtype = 'float')
-
-        # Calculate the xy ordinates for clock positions.       
-        vec_r = condensed_probs
-        vec_x = vec_r * np.cos(thetas)
-        vec_y = vec_r * np.sin(thetas)
-        xy_vecs[:,0] = np.sum(vec_x, axis = 1)
-        xy_vecs[:,1] = np.sum(vec_y, axis = 1)
-
-        # Find the theta angle from 0 to 2pi.
-        ang = np.arctan2(xy_vecs[:,1], xy_vecs[:,0]) 
-        ang[ang<0] = ang[ang<0]+2*np.pi
-
-        # Sort the angles for returning the indicies.  
-        cell_ordered_inds = np.argsort(ang)
-
-    return cell_ordered_inds 
 
 # Plot Umap of data using scanpy umap plot function
-def plot_UMAP(data_scnpy: Optional[AnnData] = None,
-              n_top_genes: int = 2000,
-              show_figure: bool = False,
-              fig_save_path: pathlib.Path | str | None = None, ):
+def plot_UMAP(data_scnpy,
+              n_top_genes = 2000,
+              show_figure = False,
+              fig_save_path = None):
 
     """
     Plot UMAP of classified data
@@ -387,11 +451,13 @@ def plot_UMAP(data_scnpy: Optional[AnnData] = None,
     ----------
     data_scnpy : annData object
         New scRNA-seq dataset to be classified.
+    n_top_genes: int
+        The number of genes to consider for pca.
+    show_figure: bool
+        If False then returns an axis object, if True then shows plot and doesn't return axis object.
     fig_save_path: string or pathlib object
         Path of figure or image to save.  File type is infered from the file extension (pdf, jpg, png, etc)
-    n_top_genes: int 
-        The number of genes to consider for pca.  
-   
+
     Returns
     -------
     Generates Matplotlib figure
@@ -404,21 +470,19 @@ def plot_UMAP(data_scnpy: Optional[AnnData] = None,
     sc.pp.neighbors(data_scnpy)
     sc.tl.umap(data_scnpy)
 
-  
-
     if fig_save_path is None:
         print('Overwriting previous plot')
         fig_save_path = '_ccAFv2_plot.pdf'
 
     # Prepare a color mapping dictionary
     plot_cmap = {"Neural G0": "#d9a428",
-                     "G0/G1": "#FF6600", 
-                        "G1": "#f37f73", 
-                   "Late G1": "#1fb1a9", 
-                         "S": "#8571b2", 
-                      "S/G2": "#db7092", 
+                     "G0/G1": "#FF6600",
+                        "G1": "#f37f73",
+                   "Late G1": "#1fb1a9",
+                         "S": "#8571b2",
+                      "S/G2": "#db7092",
                       "G2/M": "#3db270",
-                "M/Early G1": "#6d90ca",  
+                "M/Early G1": "#6d90ca",
                    "Unknown": "#d3d3d3"}
 
     # Plot UMAP of U5 hNSCs
@@ -426,271 +490,84 @@ def plot_UMAP(data_scnpy: Optional[AnnData] = None,
 
     return None
 
-# Plot class frequency against prediction minnimum threshold values
-def plot_threshold(class_probs: np.ndarray | None = None, 
-                   threshold_levels: np.ndarray | None = None, 
-                   include_g0: bool = False,  
-                   show_figure: bool = False,
-                   fig_save_path: pathlib.Path | str | None = None):
 
-    """
-    Generate threshold plot of class frequency vs probability threshold
+# Plot circular manifold with cell cycle labels
+def plot_circ_manifold(adata,
+                       fig_save_path = None):
 
-    Parameters
-    ----------
-    class_probs : float numpy array of num samples by num classes of class probabilities 
-        This numpy array is generated from 
+    edges = np.linspace(0, 2*np.pi, n_bins + 1)
+    centers = (edges[:-1] + edges[1:]) / 2
 
-    threshold_levels: float numpy array of range 0 to 1 or None  
-        Path of figure or image to save.  File type is infered from the file extension (pdf, jpg, png, etc)
-    
-    include_g0: bool  
-        The number of genes to consider for pca.  
-    
-    file_path:  None, string, or pathlib object
-   
-    Returns
-    -------
-    Generates Matplotlib figure
-    Saves that figure 
+    ccAFv2_colors['Neural G0'] = ccAFv2_colors['G0']
+    ordered = {'G0':0,'G1':1,'Late G1':2,'S':3,'S/G2':4,'G2/M':5, 'M/Early G1':6}
 
-    """
+    meta_data = adata.obs
 
-    # Create default threshold level vector
-    if threshold_levels is None:
-        threshold_levels = np.arange(0, 1, 0.1)    
+    with PdfPages(fig_save_path) as pdf:
+        fig1 = plt.figure(figsize=(6,6))
+        plt.axis('off')
+        # Unit circle
+        theta = np.linspace(0, 2*np.pi, 500)
+        plt.plot(np.cos(theta), np.sin(theta))
 
-    fig_save_path = "ccAGv2_threshold_plot.pdf" if fig_save_path is None else fig_save_path
-    # Check the file path for saving figures 
-    file_path = _check_path(fig_save_path)
+        # Bin boundaries
+        for edge in edges[:-1]:
+            plt.plot([0, np.cos(edge)],
+                     [0, np.sin(edge)],
+                     linestyle='--')
 
-    # create class_map
-    class_map = _create_classmap(include_g0)
+        # Points
+        for class_name in ordered:
+            if class_name=='G0':
+                class_name2 = 'Neural G0'
+            else:
+                class_name2 = class_name
+            print(class_name2)
 
-    # find number of samples 
-    n_samples = class_probs.shape[0]
+            label_radius = (10-ordered[class_name])/10
+            angles = np.array(meta_data.loc[meta_data['ccAFv2']==class_name2, 'theta'])
+            df = pd.DataFrame({'angle': angles})
+            # count duplicates within each angle
+            df['rank'] = df.round(1).groupby('angle').cumcount()
+            # spread from radius 0.9 to 1.1
+            df['r'] = label_radius + (df['rank'] - df.groupby('angle')['rank'].transform('max')/2) * 0.0015
+            df['x'] = df['r'] * np.cos(df['angle'])
+            df['y'] = df['r'] * np.sin(df['angle'])
 
-    # Determin the number of classes and add one more for the unknown value
-    n_classes = len(class_map)
+            plt.scatter(df['x'], df['y'], s=5, c=ccAFv2_colors[class_name], alpha=0.6)
 
-    # Create array fpr probability values.  initialize the array to the unknown class threshold value.  
-    probs_thresh = np.empty((n_samples, n_classes), dtype = 'float64')
-    probs_call   = np.empty((n_samples, threshold_levels.shape[0]), dtype = 'int')
-    
-    class_counts = np.zeros((n_classes, threshold_levels.shape[0]), dtype = 'int')
-    # Load in class probabilities for compairison to thresholds
-    probs_thresh[:,:-1] = class_probs[:,:]
-    threshold_labels = []
+        # Bin labels
+        label_radius = 1.2
+        for i, center in enumerate(centers):
+            x = label_radius * np.cos(center)
+            y = label_radius * np.sin(center)
 
-    # loop through threshold levels 
-    for ind, threshold in enumerate(threshold_levels, start = 0):
-        # set probabilities
-        probs_thresh[:,-1] = threshold
+            plt.text(
+                x, y,
+                f"Bin {i}",
+                ha="center",
+                va="center",
+                fontsize=12,
+                fontweight='bold'
+            )
 
-        # find which class has highest probability 
-        probs_call[:, ind] = np.argmax(probs_thresh, axis =1)
+        # Labels as multiples of p
+        label_radius = 1.15
 
-        # Use np.unique values and counts.  This could be faster using fasthistrogram histogram1d
-        vals,  counts = np.unique(probs_call[:, ind], return_counts = True)
-        
-        class_counts[vals,ind] = counts
+        for angle in edges:
+            multiple = angle / np.pi
+            plt.text(
+                label_radius * np.cos(angle),
+                label_radius * np.sin(angle),
+                f"{multiple:.2f}$\pi$",
+                ha="center",
+                va="center"
+            )
 
-        threshold_labels.append(f'{threshold:.1f}')
+        plt.gca().set_aspect('equal')
+        plt.xlim(-1.1, 1.1)
+        plt.ylim(-1.1, 1.1)
 
-    # Calculate class percentages
-    class_perc = class_counts / n_samples
-    
-    # Since we can have duplicate labels in the class_map (if we ignore g0) we need to make a list 
-    class_labels = list(set([item for item in class_map.values()]))
-    class_labels.sort(reverse = True)
+        pdf.savefig(fig1)
+        plt.close()
 
-    weight_counts = { label : np.zeros((threshold_levels.shape[0]), dtype = 'float') for label in class_labels }
-   
-    # Consolidate weight percentages 
-    for vals, label in class_map.items():
-        weight_counts[label] += class_perc[vals,:]
-
-    # Prepare a color mapping dictionary
-    plot_cmap = {"Neural G0": "#d9a428",
-                     "G0/G1": "#FF6600", 
-                        "G1": "#f37f73", 
-                   "Late G1": "#1fb1a9", 
-                         "S": "#8571b2", 
-                      "S/G2": "#db7092", 
-                      "G2/M": "#3db270",
-                "M/Early G1": "#6d90ca",  
-                   "Unknown": "#d3d3d3"}
-    width = 0.8
-
-    fig, ax = plt.subplots(layout='constrained')
-    bottom  = np.zeros(threshold_levels.shape[0])
-
-    for label, weight_count in weight_counts.items():
-        bar_color = plot_cmap[label]
-        p = ax.bar(threshold_labels, weight_count, width, label=label, bottom=bottom, color = bar_color)
-        bottom += weight_count
-
-    ax.set_xlabel('Threshold Level')
-    ax.set_ylabel('Class frequency')
-    ax.set_title("Class frequency at threshold level")
-    fig.legend(loc="outside center right", frameon=False, reverse = True  )
-
-    fig.savefig(file_path)
-
-    if show_figure:
-        plt.show()
-
-    return None
-
-# Plot Cell-cycle clock to show progress of cells through 
-def plot_cellcycleclock(class_probs: np.ndarray,
-                        labels: List[str], 
-                        clock_offset: float | None = None,
-                        include_g0: bool = False,
-                        show_figure: bool = False,
-                        fig_save_path: pathlib.Path | str | None = None):
-
-    """
-    predict cells order in cell cycle using classifier prediction probabilities
-
-    Parameters
-    ----------
-    class_probs : numpy float array 
-        predictions (preds) ourput from predict_labels function
-   
-    clock_offset : float 
-        The offset to rotate the clock vectors so that G0 or G0/G1 state is not split betweem the begining 
-        and end of the dataset.  
-
-    include_g0 : bool
-        Whether or not to provide G0, G1, and Late G1 or to collapse them into a G0/G1 state. Best practice is to set to True if not applying to neuroepithelial derived cells.
-
-    Returns
-    -------
-    cell_ordered_ind:  numpy int array
-        The indicies of the ordered cells.  This doesn't return the sorted data but the indicies to order the data.
-
-    fig: Matplotlib figure handle 
-        Matplotlib figure handle for saving the figure if needed.
-    """
-    
-    
-    fig_save_path = "ccAFv2_clock_plot.pdf" if fig_save_path is None else fig_save_path
-    # Check the file path for saving figures 
-    file_path = _check_path(fig_save_path)
-
-    if (clock_offset is None) and include_g0:
-        clock_offset = np.pi/25
-
-    elif (clock_offset is None) and not include_g0:
-        clock_offset = np.pi/12.5
-
-    if include_g0:
-
-        lbl_array   = ["Neural G0", "G1", "Late G1", "S","S/G2", "G2/M", "M/Early G1"]
-        offsets = [[-0.2,-0.1],
-                    [0,0],
-                    [-0.1,0],
-                    [-0.05, 0],
-                    [-0.05,-.05],
-                    [-0.05,-0.05],
-                    [0,0]]
-
-        # Initialize arrays for calculating cell angle
-        cycle_order = np.array([4,0,2,5,6,1,3], dtype = 'int')
-        thetas = np.tile( np.arange(0,2*np.pi, 2*np.pi/7) + clock_offset, [class_probs.shape[0], 1])
-        xy_vecs = np.zeros((class_probs.shape[0], 2), dtype = 'float')
-        
-        # Re-order the predictions 
-        vec_r = class_probs[:,cycle_order] 
-
-        # Calculate the xy ordinates for clock positions.
-        vec_x = vec_r * np.cos(thetas)
-        vec_y = vec_r * np.sin(thetas)
-        xy_vecs[:,0] = np.sum(vec_x, axis = 1)
-        xy_vecs[:,1] = np.sum(vec_y, axis = 1)
-
-        # Find the theta angle from 0 to 2pi.
-        ang = np.arctan2(xy_vecs[:,1], xy_vecs[:,0]) 
-        ang[ang<0] = ang[ang<0]+2*np.pi
-
-        # Sort the angles for returning the indicies.  
-        cell_ordered_inds = np.argsort(ang)
-
-    else:
-
-        lbl_array   = ["G0/G1", "S", "S/G2", "G2/M", "M/Early G1"]
-        offsets = [[-0.2,-0.1],
-                [0,0],
-                [-0.1,0],
-                [-0.05, 0],
-                [-0.05,-.05],
-                [-0.05,-0.05],
-                [0,0]]
-
-        cycle_order = [0,5,6,1,5]
-
-        # Combine Neural G0, G1 and Late G1 into a single class
-        condensed_probs = np.zeros((class_probs.shape[0],5), dtype = class_probs.dtype)
-        condensed_probs[:,0]  = np.sum(class_probs[:,[0,2,4]], axis = 1)
-        condensed_probs[:,1:] = class_probs[:,[5,6,1,3]]
-
-        # Initialize arrays for calculating cell angle
-        thetas = np.tile( np.arange(0,2*np.pi, 2*np.pi/5) + clock_offset, [class_probs.shape[0], 1])
-        xy_vecs = np.zeros((class_probs.shape[0], 2), dtype = 'float')
-
-        # Calculate the xy ordinates for clock positions.       
-        vec_r = condensed_probs
-        vec_x = vec_r * np.cos(thetas)
-        vec_y = vec_r * np.sin(thetas)
-        xy_vecs[:,0] = np.sum(vec_x, axis = 1)
-        xy_vecs[:,1] = np.sum(vec_y, axis = 1)
-
-        # Find the theta angle from 0 to 2pi.
-        ang = np.arctan2(xy_vecs[:,1], xy_vecs[:,0]) 
-        ang[ang<0] = ang[ang<0]+2*np.pi
-
-        # Sort the angles for returning the indicies.  
-        cell_ordered_inds = np.argsort(ang)
-
-
-    plot_cmap = {"Neural G0": "#d9a428",
-                     "G0/G1": "#FF6600", 
-                        "G1": "#f37f73", 
-                   "Late G1": "#1fb1a9", 
-                         "S": "#8571b2", 
-                      "S/G2": "#db7092", 
-                      "G2/M": "#3db270",
-                "M/Early G1": "#6d90ca",  
-                   "Unknown": "#d3d3d3"}
-
-    cmap_list = []
-    for lbl in labels:
-        cmap_list.append(plot_cmap[lbl])
-
-    # Plot the cell cycle clock
-    fig, ax = plt.subplots(figsize = [8,8])
-    ax.set_title('ccAFv2 Clock Plot', fontweight = 'bold')
-
-    # Loop through intividual points and plot them.
-    for n in range(xy_vecs.shape[0]):
-        ax.plot(xy_vecs[n,0], xy_vecs[n,1], '.', color = cmap_list[n])
-
-    ax.set_xlim(-1.25,1.25)
-    ax.set_ylim(-1.25,1.25)
-
-    symbol_list = ['.','.', 's', '^', 'v', 's', 'v']
-
-    for n, (angle, text_label) in enumerate(zip(thetas[0,:], lbl_array), start = 0):
-        ax.plot([0,np.cos(angle)], [0, np.sin(angle)], '-', color = [0,0,0,0.4])
-        ax.plot(np.cos(angle), np.sin(angle), marker = symbol_list[n], color = plot_cmap[text_label])
-
-        x =  1.05*np.cos(angle)+offsets[n][0]
-        y =  1.05*np.sin(angle)+offsets[n][1]
-        ax.text(x,y, text_label)
-
-    fig.savefig(file_path)   
-    if show_figure: 
-        plt.show()
-    
-    return cell_ordered_inds, fig

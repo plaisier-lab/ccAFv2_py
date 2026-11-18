@@ -154,3 +154,8 @@ cython_debug/
 
 # ccAFv2 generated Figures
 figures/
+
+# Vim
+*.swp
+*.swo
+*~

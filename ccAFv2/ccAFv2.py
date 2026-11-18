@@ -435,7 +435,9 @@ def predict_labels(new_data, species='human', gene_id='ensembl', threshold=0, in
     else:
         labels = pd.Categorical(labels, categories=['Neural G0', 'G1', 'Late G1', 'S', 'S/G2', 'G2/M', 'M/Early G1', 'Unknown'], ordered=True)
     print('Done.')
-    return labels, probs_df
+    new_data.obs = pd.concat([new_data.obs, probs_df], axis=1)
+    new_data.obs['ccAFv2'] = labels
+    return new_data
 
 
 # Plot Umap of data using scanpy umap plot function

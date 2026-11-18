@@ -352,7 +352,7 @@ def _prep_predict_data(data_scanpy, genes):
         data_df = pd.DataFrame(_scale(data_subset), index = data_subset.index, columns = data_subset.columns)
 
         # Add minimum values for missing genes
-        missing = set(genes).difference(data_df.columns)
+        missing = list(set(genes).difference(data_df.columns))
         if len(missing)>0:
             data_df_wMissing = pd.concat([data_df, pd.DataFrame(data_df.values.min(), index=data_df.index, columns = missing)], axis=1)
             return data_df_wMissing[list(genes)]

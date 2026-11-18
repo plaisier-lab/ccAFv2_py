@@ -62,7 +62,7 @@ with path('ccAFv2', 'ccAFv2_classes.txt') as inPath:
 with path('ccAFv2', 'seurat_ref_U5_hNSC_SCT_7_29_2026.csv') as inPath:
     _u5_ref = pd.read_csv(inPath, index_col=0, header=0)
 with path('ccAFv2', 'rownames_u5_ref.csv') as inPath:
-    _rownames_u5_ref = pd.read_csv(inPath, index_col=0, header=0)
+    _rownames_u5_ref = pd.read_csv(inPath, header=0)
 
 
 ###############

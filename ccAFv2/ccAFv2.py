@@ -31,6 +31,7 @@ import warnings
 from ._ccAFv2 import run_model
 from anndata  import AnnData
 from importlib.resources import files
+import matplotlib
 import matplotlib.pyplot as plt
 matplotlib.use('Agg')
 matplotlib.rcParams['pdf.fonttype'] = 42

@@ -25,7 +25,7 @@
 import numpy  as np
 import pandas as pd
 import scanpy as sc
-import pathlib
+from importlib.resources import path
 import warnings
 
 from ._ccAFv2 import run_model

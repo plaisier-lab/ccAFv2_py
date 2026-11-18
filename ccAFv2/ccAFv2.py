@@ -37,6 +37,8 @@ matplotlib.use('Agg')
 matplotlib.rcParams['pdf.fonttype'] = 42
 from matplotlib.backends.backend_pdf import PdfPages
 
+from scipy.sparse import isspmatrix
+
 from scipy.stats import vonmises
 from scipy.stats import zscore
 from sklearn.preprocessing import StandardScaler

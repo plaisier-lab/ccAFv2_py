@@ -395,7 +395,7 @@ def predict_labels(new_data, species='human', gene_id='ensembl', threshold=0, in
     ## Add 10 angular bins
     # 1. Load up the U5 refrence loadings
     u5_ref_rownames = rownames_u5_ref[species+'_'+gene_id]
-    rownames(u5_ref) = u5_ref_rownames
+    u5_ref.index = u5_ref_rownames
 
     # 2. Project new_data onto reference
     new_data = project_cycle_from_anndata(new_data,

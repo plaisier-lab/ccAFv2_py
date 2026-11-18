@@ -392,7 +392,7 @@ def predict_labels(new_data, species='human', gene_id='ensembl', threshold=0, in
     genes = _genes_all[species+'_'+gene_id]
 
     # Prepare gene expression data for prediction
-    pred_data = _prep_predict_data(new_data, genes)
+    prep_data = _prep_predict_data(new_data, genes)
 
 
     ## Add 10 angular bins
@@ -416,7 +416,7 @@ def predict_labels(new_data, species='human', gene_id='ensembl', threshold=0, in
 
 
     ## Predict probabilities for each class using classifier
-    probs_df = _predict_classes(pred_data_angBins, classes = classes)
+    probs_df = _predict_classes(prep_data_angBins, classes = classes)
 
     print('  Choosing cell cycle state...')
 

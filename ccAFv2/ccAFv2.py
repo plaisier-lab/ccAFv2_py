@@ -37,7 +37,7 @@ matplotlib.use('Agg')
 matplotlib.rcParams['pdf.fonttype'] = 42
 from matplotlib.backends.backend_pdf import PdfPages
 
-from scipy.sparse import isspmatrix
+from scipy import sparse
 
 from scipy.stats import vonmises
 from scipy.stats import zscore
@@ -345,7 +345,7 @@ def _prep_predict_data(data_scanpy, genes):
 
         # Scale the data subset with all available genes
         data_subset = data_scanpy[:,in_both]
-        if isspmatrix(data_scanpy.X):
+        if sparse.isspmatrix(data_scanpy.X):
             data_subset = pd.DataFrame(data_subset.X.todense(), index = data_subset.obs_names, columns = data_subset.var_names)
         else:
             data_subset = pd.DataFrame(data_subset.X, index = data_subset.obs_names, columns = data_subset.var_names)

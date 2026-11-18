@@ -208,7 +208,7 @@ def project_cycle_from_matrix(expr, ref_m, center_pc1=0, center_pc2=0):
 
 
 # Project transcriptomic data into reference embedding
-def project_cycle_from_anndata( adata, ref_m, layer=None, reduction_name="cc_Projection", position_col="thetaPos", center_pc1=0,center_pc2=0):
+def project_cycle_from_anndata( adata, ref_m, reduction_name="cc_Projection", position_col="thetaPos", center_pc1=0,center_pc2=0):
     """
     Project AnnData expression data onto a reference embedding.
 
@@ -232,7 +232,7 @@ def project_cycle_from_anndata( adata, ref_m, layer=None, reduction_name="cc_Pro
 
     # Subset before converting sparse data to a dense matrix.
     subset = adata[:, genes]
-    expression = subset.X if layer is None else subset.layers[layer]
+    expression = subset.X
 
     if sparse.issparse(expression):
         expression = expression.toarray()
@@ -402,8 +402,7 @@ def predict_labels(new_data, species='human', gene_id='ensembl', threshold=0, in
 
     # 2. Project new_data onto reference
     new_data = project_cycle_from_anndata(new_data,
-                                          u5_ref,
-                                          layer="scale.data")
+                                          u5_ref)
 
     projection = adata.obsm["cc_Projection"]
     theta = adata.obs["thetaPos"]
